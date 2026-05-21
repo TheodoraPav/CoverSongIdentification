@@ -1,0 +1,106 @@
+# =============================================================================
+# Cover Song Identification — root .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# cover-dataset: download tooling (not needed to run the ML pipeline)
+# -----------------------------------------------------------------------------
+cover-dataset/src/
+cover-dataset/run.ps1
+cover-dataset/requirements.txt
+cover-dataset/.env
+cover-dataset/.env.example
+cover-dataset/.venv/
+cover-dataset/.cache
+
+# cover-dataset: audio + manifests (local / Drive / Kaggle only)
+cover-dataset/data/audio/
+cover-dataset/data/audio_manifest.csv
+cover-dataset/data/seed_pairs.csv
+cover-dataset/data/tracks.csv
+cover-dataset/data/tracks.parquet
+cover-dataset/data/previews/
+
+# Root download helper script (if present)
+script.py
+
+# -----------------------------------------------------------------------------
+# Pipeline artifacts
+# -----------------------------------------------------------------------------
+data_processed/
+cached_features/
+checkpoints/
+results/runs/
+
+# Large binary tensors / model files
+*.pt
+*.pth
+*.npy
+*.npz
+*.ckpt
+*.safetensors
+*.bin
+
+# -----------------------------------------------------------------------------
+# Audio assets
+# -----------------------------------------------------------------------------
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+
+# -----------------------------------------------------------------------------
+# Secrets and environments
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.secret
+.venv/
+venv/
+env/
+temp_libs/
+
+# -----------------------------------------------------------------------------
+# Python / Jupyter / OS
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Colab / Jupyter outputs (optional: strip cell outputs before commit)
+# notebooks/**/.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local screenshots / misc (not project assets)
+Screenshot*.png
+
+# -----------------------------------------------------------------------------
+# Report and internal planning (add later when ready)
+# -----------------------------------------------------------------------------
+ReportCoverSongIdentification/
+implementation_plan.md
+implementation_plan_agent.md
+
+# -----------------------------------------------------------------------------
+# Explicit allow-list
+# -----------------------------------------------------------------------------
+!results/metrics/
+!results/metrics/*.json
+!results/figures/
+!results/figures/*.png
+!results/figures/*.pdf

@@ -1,0 +1,51 @@
+# Cover Song Identification — root requirements
+# Target environment: Google Colab (Python 3.10+) and local dev.
+# Install with:  pip install -r requirements.txt
+#
+# Notes:
+#   * torch / torchaudio are pre-installed on Colab; Versions below are 
+#   * minimums known to work with transformers >=4.40.
+#   * MERT (m-audio/MERT-v1-95M) needs `nnAudio` to load its conv frontend.
+#   * audiomentations pulls scipy/soundfile transitively.
+
+# Core scientific stack
+numpy>=1.26,<2.3
+scipy>=1.11
+pandas>=2.2
+pyarrow>=17.0
+
+# Deep learning
+torch>=2.2
+torchaudio>=2.2
+
+transformers>=4.41
+huggingface_hub>=0.23
+accelerate>=0.30
+safetensors>=0.4
+
+# MERT backbone (needed by m-audio/MERT-v1-*)
+nnAudio>=0.3.2
+
+# Audio I/O
+librosa>=0.10
+soundfile>=0.12
+audioread>=3.0
+
+# Augmentation 
+audiomentations>=0.36
+
+# Evaluation: silhouette, t-SNE
+scikit-learn>=1.4
+umap-learn>=0.5
+matplotlib>=3.8
+
+# Config + utilities
+pyyaml>=6.0
+tqdm>=4.66
+
+# Reuse dataset tooling from cover-dataset/ (Spotify + YouTube fetchers).
+# spotipy>=2.24
+# python-dotenv>=1.0
+# requests>=2.32
+# yt-dlp>=2025.1.1
+# mutagen>=1.47
