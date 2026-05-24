@@ -19,10 +19,10 @@ import argparse
 import sys
 from pathlib import Path
 
+import librosa
 import numpy as np
 import pandas as pd
 import torch
-import torchaudio
 from tqdm import tqdm
 
 if __package__ in (None, ""):
@@ -108,28 +108,23 @@ def load_segment_waveform(
     end_sec: float,
     target_sr: int,
 ) -> np.ndarray:
-    """Load one mono float32 clip and resample to `target_sr`."""
+    """Load one mono float32 clip and resample to `target_sr`.
+
+    Uses librosa (not ``torchaudio.info`` / partial load) for compatibility with
+    torchaudio 2.9+ on Colab/Kaggle.
+    """
     if not audio_path.is_file():
         raise FileNotFoundError(f"Audio not found: {audio_path}")
 
-    info = torchaudio.info(str(audio_path))
-    src_sr = info.sample_rate
-    start_frame = max(0, int(start_sec * src_sr))
-    num_frames = max(1, int((end_sec - start_sec) * src_sr))
-
-    wav, sr = torchaudio.load(
+    duration = max(1e-3, float(end_sec) - float(start_sec))
+    wav, _sr = librosa.load(
         str(audio_path),
-        frame_offset=start_frame,
-        num_frames=num_frames,
+        sr=target_sr,
+        mono=True,
+        offset=float(start_sec),
+        duration=duration,
     )
-    if wav.shape[0] > 1:
-        wav = wav.mean(dim=0, keepdim=True)
-    wav = wav.squeeze(0)
-
-    if sr != target_sr:
-        wav = torchaudio.functional.resample(wav, sr, target_sr)
-
-    return wav.numpy().astype(np.float32)
+    return wav.astype(np.float32)
 
 
 def prepare_waveform(
