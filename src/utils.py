@@ -294,11 +294,42 @@ def metrics_file_for(cfg: ExperimentConfig) -> Path:
     return Path(cfg.paths.results_dir) / "metrics" / f"{cfg.experiment_name}.json"
 
 
+def _collapse_duplicate_path_parts(path: Path) -> Path:
+    """Collapse consecutive duplicate directory names (e.g. ``data/data/audio``)."""
+    parts = list(path.parts)
+    if not parts:
+        return path
+    out: list[str] = []
+    for part in parts:
+        if out and out[-1] == part:
+            continue
+        out.append(part)
+    return Path(*out)
+
+
+def _strip_redundant_path_prefix(rel: Path, base: Path) -> Path:
+    """Drop a leading segment when it repeats ``base.name`` (manifest/base mismatch)."""
+    if rel.parts and base.name and rel.parts[0] == base.name:
+        return Path(*rel.parts[1:])
+    return rel
+
+
 def resolve_audio_path(cfg: ExperimentConfig, value: str) -> Path:
-    """Resolve a manifest `audio_path` (Windows-style relative) to a full Path."""
+    """Resolve a manifest `audio_path` (Windows-style relative) to a full Path.
+
+    Manifest rows often store ``data/audio/<id>.wav`` while ``audio_root`` or the
+    manifest directory is already ``.../data``. Without normalization that yields
+    ``.../data/data/audio/...``. Absolute paths stored in ``segments.csv`` are
+    normalized the same way.
+    """
     p = Path(str(value).replace("\\", "/"))
     if p.is_absolute():
-        return p
+        return _collapse_duplicate_path_parts(p)
+
     if cfg.paths.audio_root:
-        return Path(cfg.paths.audio_root) / p
-    return Path(cfg.paths.manifest).resolve().parent / p
+        base = Path(cfg.paths.audio_root)
+    else:
+        base = Path(cfg.paths.manifest).resolve().parent
+
+    p = _strip_redundant_path_prefix(p, base)
+    return _collapse_duplicate_path_parts(base / p)

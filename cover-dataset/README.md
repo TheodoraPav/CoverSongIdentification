@@ -18,7 +18,8 @@ Point your experiment YAML to:
 ```yaml
 paths:
   manifest: cover-dataset/data/audio_manifest.csv
-  audio_root: cover-dataset/data    # optional; resolves relative audio_path
+  # audio_path in CSV is usually `data/audio/<id>.wav` — use cover-dataset (parent), not .../data
+  audio_root: cover-dataset
 ```
 
 ## Not in Git

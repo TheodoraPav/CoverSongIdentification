@@ -43,7 +43,7 @@ class BackboneSpec:
 BACKBONE_REGISTRY: dict[str, BackboneSpec] = {
     "mert": BackboneSpec(
         name="mert",
-        checkpoint="m-audio/MERT-v1-95M",
+        checkpoint="m-a-p/MERT-v1-95M",
         sample_rate=24000,
         hidden_dim=768,
         input_type="waveform",
@@ -51,7 +51,7 @@ BACKBONE_REGISTRY: dict[str, BackboneSpec] = {
     ),
     "mert_large": BackboneSpec(
         name="mert_large",
-        checkpoint="m-audio/MERT-v1-330M",
+        checkpoint="m-a-p/MERT-v1-330M",
         sample_rate=24000,
         hidden_dim=1024,
         input_type="waveform",

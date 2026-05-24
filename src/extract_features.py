@@ -303,11 +303,32 @@ def _load_batch(
     return waveforms, seeds, ok_rows
 
 
+def _validate_segment_audio_paths(
+    cfg: ExperimentConfig, segments: pd.DataFrame, n_check: int = 5
+) -> None:
+    """Fail fast before loading the backbone if paths are wrong."""
+    n = min(n_check, len(segments))
+    if n == 0:
+        raise RuntimeError("segments table is empty.")
+    missing: list[Path] = []
+    for i in range(n):
+        p = resolve_audio_path(cfg, str(segments.iloc[i]["audio_path"]))
+        if not p.is_file():
+            missing.append(p)
+    if len(missing) == n:
+        sample = missing[0]
+        raise FileNotFoundError(
+            f"No audio found for the first {n} segments (example: {sample}). "
+            "Check paths.manifest and paths.audio_root in the YAML."
+        )
+
+
 def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
     set_global_seed(cfg.seed)
     device = pick_device()
 
     segments = load_segments_table(cfg)
+    _validate_segment_audio_paths(cfg, segments)
     apply_aug = should_apply_offline_augment(cfg)
     augment_flag = cfg.augment if apply_aug else "none"
 

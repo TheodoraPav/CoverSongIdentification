@@ -203,7 +203,8 @@ def build_segments(cfg: ExperimentConfig) -> pd.DataFrame:
 
     for _, track in manifest.iterrows():
         duration = float(track["duration_sec"])
-        audio_path = resolve_audio_path(cfg, track["audio_path"])
+        manifest_audio = str(track["audio_path"]).replace("\\", "/")
+        audio_path = resolve_audio_path(cfg, manifest_audio)
 
         if cfg.sampling == "random":
             segs = _sample_random(duration, n, seg_len, rng)
@@ -222,7 +223,8 @@ def build_segments(cfg: ExperimentConfig) -> pd.DataFrame:
                     "track_id": track["track_id"],
                     "group_id": int(track["group_id"]),
                     "role": str(track["role"]),
-                    "audio_path": str(audio_path),
+                    # Keep manifest-relative paths so later stages re-resolve with current config.
+                    "audio_path": manifest_audio,
                     "seg_id": seg_id,
                     "start_sec": round(float(start), 4),
                     "end_sec": round(float(end), 4),

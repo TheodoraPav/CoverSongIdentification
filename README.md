@@ -77,7 +77,7 @@ Example metrics file: `results/metrics/baseline_mert_ntxent.json`
 
 Use config `configs/baseline_mert_ntxent_kaggle.yaml` and follow **[docs/KAGGLE.md](docs/KAGGLE.md)** for a full notebook example (GPU, dataset slug, four pipeline cells).
 
-Quick path: audio under `/kaggle/input/<your-dataset>/`, all writes under `/kaggle/working/`.
+Quick path: audio under `/kaggle/input/datasets/<user>/<dataset>/cover-dataset/` (or `/kaggle/input/<dataset>/`), writes under `/kaggle/working/`. See [docs/KAGGLE.md](docs/KAGGLE.md).
 
 ## Dataset
 

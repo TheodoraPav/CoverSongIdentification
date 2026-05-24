@@ -1,0 +1,40 @@
+experiment_name: baseline_mert_ntxent
+
+backbone: mert
+backbone_checkpoint: m-a-p/MERT-v1-95M
+sample_rate: 24000
+
+projection:
+  hidden_dim: 512
+  output_dim: 128
+  dropout: 0.1
+
+augment: none
+augment_mode: offline
+sampling: random
+loss: ntxent
+pool: mean
+segments_per_track: 5
+segment_seconds: 5.0
+seed: 42
+
+training:
+  batch_size: 64
+  epochs: 50
+  lr: 0.001
+  weight_decay: 0.0001
+  val_every: 1
+  val_fraction: 0.2
+  triplet_margin: 0.3
+  ntxent_temperature: 0.1
+  num_workers: 2
+  pin_memory: true
+
+paths:
+  # Local (default). On Colab/Kaggle, override paths. Manifest uses `data/audio/*.wav`.
+  manifest: cover-dataset/data/audio_manifest.csv
+  segments_dir: data_processed
+  audio_root: cover-dataset
+  cache_dir: cached_features
+  checkpoints: checkpoints
+  results_dir: results

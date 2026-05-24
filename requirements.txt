@@ -5,7 +5,7 @@
 # Notes:
 #   * torch / torchaudio are pre-installed on Colab; Versions below are 
 #   * minimums known to work with transformers >=4.40.
-#   * MERT (m-audio/MERT-v1-95M) needs `nnAudio` to load its conv frontend.
+#   * MERT (m-a-p/MERT-v1-95M) needs `nnAudio` to load its conv frontend.
 #   * audiomentations pulls scipy/soundfile transitively.
 
 # Core scientific stack
@@ -23,7 +23,7 @@ huggingface_hub>=0.23
 accelerate>=0.30
 safetensors>=0.4
 
-# MERT backbone (needed by m-audio/MERT-v1-*)
+# MERT backbone (needed by m-a-p/MERT-v1-*)
 nnAudio>=0.3.2
 
 # Audio I/O
