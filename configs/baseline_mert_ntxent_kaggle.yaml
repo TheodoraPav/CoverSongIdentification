@@ -30,9 +30,9 @@ training:
   pin_memory: false
 
 paths:
-  manifest: /kaggle/input/COVER_SONGS/cover-dataset/data/audio_manifest.csv
+  manifest: /kaggle/input/theodorapavlidou/cover-song-dataset/cover-dataset/data/audio_manifest.csv
   segments_dir: /kaggle/working/data_processed
-  audio_root: /kaggle/input/COVER_SONGS/cover-dataset/data
+  audio_root: /kaggle/input/theodorapavlidou/cover-song-dataset/cover-dataset/data
   cache_dir: /kaggle/working/cached_features
   checkpoints: /kaggle/working/checkpoints
   results_dir: /kaggle/working/results
