@@ -1,8 +1,14 @@
-# Kaggle notebook config. Replace COVER_SONGS with your Kaggle Input dataset slug.
+# Kaggle notebook config for theodorapavlidou/cover-song-dataset.
+#
+# Dataset mount (2024+ layout):
+#   /kaggle/input/datasets/<username>/<dataset-slug>/cover-dataset/
+#
+# Manifest audio_path values are like `data/audio/<id>.wav`, so audio_root must be
+# the `cover-dataset` folder (not `cover-dataset/data`) to avoid .../data/data/audio/...
 experiment_name: baseline_mert_ntxent
 
 backbone: mert
-backbone_checkpoint: m-audio/MERT-v1-95M
+backbone_checkpoint: m-a-p/MERT-v1-95M
 sample_rate: 24000
 
 projection:
@@ -30,9 +36,9 @@ training:
   pin_memory: false
 
 paths:
-  manifest: /kaggle/input/theodorapavlidou/cover-song-dataset/cover-dataset/data/audio_manifest.csv
+  manifest: /kaggle/input/datasets/theodorapavlidou/cover-song-dataset/cover-dataset/data/audio_manifest.csv
   segments_dir: /kaggle/working/data_processed
-  audio_root: /kaggle/input/theodorapavlidou/cover-song-dataset/cover-dataset/data
+  audio_root: /kaggle/input/datasets/theodorapavlidou/cover-song-dataset/cover-dataset
   cache_dir: /kaggle/working/cached_features
   checkpoints: /kaggle/working/checkpoints
   results_dir: /kaggle/working/results
