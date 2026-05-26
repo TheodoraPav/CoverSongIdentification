@@ -338,7 +338,13 @@ def main() -> None:
     _, val_loader = build_dataloaders(cfg)
     
     head = build_projection_head(cfg).to(device)
-    state = torch.load(ckpt_path, map_location=device, weights_only=False)
+    payload = torch.load(ckpt_path, map_location=device, weights_only=False)
+    if isinstance(payload, dict) and "state_dict" in payload:
+        state = payload["state_dict"]
+    else:
+        # Backwards compatibility with older checkpoints (plain state_dict).
+        state = payload
+
     head.load_state_dict(state)
     head.eval()
 
