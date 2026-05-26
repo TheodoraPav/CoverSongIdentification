@@ -13,12 +13,19 @@ Public API (used by all other src/ modules):
     features_file_for(cfg)       -> Path
     checkpoint_path_for(cfg)     -> Path
     metrics_file_for(cfg)        -> Path
+    history_file_for(cfg)        -> Path
+    curves_plot_file_for(cfg)    -> Path
+    log_file_for(cfg)            -> Path
+    umap_plot_file_for(cfg)      -> Path
+    similarity_plot_file_for(cfg)-> Path
+    silhouette_plot_file_for(cfg)-> Path
     resolve_audio_path(cfg, val) -> Path
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import logging
 import os
@@ -28,6 +35,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
@@ -230,7 +240,7 @@ def get_logger(
     log_file: str | os.PathLike | None = None,
     level: int = logging.INFO,
 ) -> logging.Logger:
-    """stderr handler + optional file handler. Re-callable without duplicates."""
+    """stdout handler + optional file handler. Re-callable without duplicates."""
     logger = logging.getLogger(name)
     logger.setLevel(level)
     logger.propagate = False
@@ -240,12 +250,12 @@ def get_logger(
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    has_stderr = any(
-        isinstance(h, logging.StreamHandler) and h.stream is sys.stderr
+    has_stdout = any(
+        isinstance(h, logging.StreamHandler) and h.stream is sys.stdout
         for h in logger.handlers
     )
-    if not has_stderr:
-        sh = logging.StreamHandler(sys.stderr)
+    if not has_stdout:
+        sh = logging.StreamHandler(sys.stdout)
         sh.setFormatter(fmt)
         logger.addHandler(sh)
 
@@ -284,14 +294,49 @@ def features_file_for(cfg: ExperimentConfig) -> Path:
     return cache_path_for(cfg) / "features.pt"
 
 
+def experiment_id_for(cfg: ExperimentConfig) -> str:
+    """Generate a descriptive, unique identifier combining configuration fields."""
+    return f"{cfg.experiment_name}_{cfg.backbone}_{cfg.loss}_{cfg.augment}_{cfg.sampling}_seed{cfg.seed}"
+
+
 def checkpoint_path_for(cfg: ExperimentConfig) -> Path:
-    """`checkpoints/{backbone}/best_head.pt`."""
-    return Path(cfg.paths.checkpoints) / cfg.backbone / "best_head.pt"
+    """`checkpoints/{backbone}/{experiment_id}_best_head.pt`."""
+    return Path(cfg.paths.checkpoints) / cfg.backbone / f"{experiment_id_for(cfg)}_best_head.pt"
 
 
 def metrics_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/metrics/{experiment_name}.json`."""
-    return Path(cfg.paths.results_dir) / "metrics" / f"{cfg.experiment_name}.json"
+    """`results/metrics/{experiment_id}.json`."""
+    return Path(cfg.paths.results_dir) / "metrics" / f"{experiment_id_for(cfg)}.json"
+
+
+def history_file_for(cfg: ExperimentConfig) -> Path:
+    """`results/history/{experiment_id}_history.csv`."""
+    return Path(cfg.paths.results_dir) / "history" / f"{experiment_id_for(cfg)}_history.csv"
+
+
+def curves_plot_file_for(cfg: ExperimentConfig) -> Path:
+    """`results/figures/{experiment_id}_curves.png`."""
+    return Path(cfg.paths.results_dir) / "figures" / f"{experiment_id_for(cfg)}_curves.png"
+
+
+def log_file_for(cfg: ExperimentConfig) -> Path:
+    """`results/logs/{experiment_id}.log`."""
+    return Path(cfg.paths.results_dir) / "logs" / f"{experiment_id_for(cfg)}.log"
+
+
+def umap_plot_file_for(cfg: ExperimentConfig) -> Path:
+    """`results/figures/{experiment_id}_umap.png`."""
+    return Path(cfg.paths.results_dir) / "figures" / f"{experiment_id_for(cfg)}_umap.png"
+
+
+def similarity_plot_file_for(cfg: ExperimentConfig) -> Path:
+    """`results/figures/{experiment_id}_similarity.png`."""
+    return Path(cfg.paths.results_dir) / "figures" / f"{experiment_id_for(cfg)}_similarity.png"
+
+
+def silhouette_plot_file_for(cfg: ExperimentConfig) -> Path:
+    """`results/figures/{experiment_id}_silhouette.png`."""
+    return Path(cfg.paths.results_dir) / "figures" / f"{experiment_id_for(cfg)}_silhouette.png"
 
 
 def _collapse_duplicate_path_parts(path: Path) -> Path:
@@ -333,3 +378,61 @@ def resolve_audio_path(cfg: ExperimentConfig, value: str) -> Path:
 
     p = _strip_redundant_path_prefix(p, base)
     return _collapse_duplicate_path_parts(base / p)
+
+
+def save_history(history: list[dict], path: Path) -> None:
+    logger = logging.getLogger("utils")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["epoch", "train_loss", "val_mrr", "val_top5", "val_silhouette"],
+        )
+        writer.writeheader()
+        writer.writerows(history)
+    logger.info("Wrote training history to %s", path)
+
+
+def save_curves_plot(history: list[dict], path: Path, best_epoch: int | None = None) -> None:
+    logger = logging.getLogger("utils")
+    epochs = [h["epoch"] for h in history]
+    losses = [h["train_loss"] for h in history]
+
+    val_epochs = [h["epoch"] for h in history if h["val_mrr"] != ""]
+    val_mrr = [h["val_mrr"] for h in history if h["val_mrr"] != ""]
+    val_top5 = [h["val_top5"] for h in history if h["val_top5"] != ""]
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    color_loss = "tab:red"
+    ax1.set_xlabel("Epoch", fontsize=11, fontweight="bold")
+    ax1.set_ylabel("Train Loss", color=color_loss, fontsize=11, fontweight="bold")
+    line1 = ax1.plot(epochs, losses, color=color_loss, label="Train Loss", linewidth=2.0)
+    ax1.tick_params(axis="y", labelcolor=color_loss)
+    ax1.grid(True, linestyle=":", alpha=0.6)
+
+    ax2 = ax1.twinx()
+    color_mrr = "tab:blue"
+    color_top5 = "tab:green"
+    ax2.set_ylabel("Validation Metrics", color="black", fontsize=11, fontweight="bold")
+    line2 = ax2.plot(val_epochs, val_mrr, color=color_mrr, marker="o", markersize=5, label="Val MRR", linewidth=1.5)
+    line3 = ax2.plot(val_epochs, val_top5, color=color_top5, marker="s", markersize=4, label="Val Top-5", linewidth=1.5)
+    ax2.tick_params(axis="y", labelcolor="black")
+    ax2.set_ylim(0.0, 1.05)
+
+    lines = line1 + line2 + line3
+    
+    if best_epoch is not None:
+        best_line = ax1.axvline(x=best_epoch, color="tab:purple", linestyle="--", linewidth=1.5, alpha=0.85, label=f"Best Epoch ({best_epoch})")
+        lines.append(best_line)
+
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc="upper right", frameon=True, shadow=False, facecolor="white", edgecolor="lightgray")
+
+    plt.title("Training Loss and Validation Retrieval Performance", fontsize=13, fontweight="bold", pad=15)
+    fig.tight_layout()
+    
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(path, dpi=150)
+    plt.close(fig)
+    logger.info("Saved curves plot to %s", path)

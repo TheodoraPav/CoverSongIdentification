@@ -32,6 +32,7 @@ from src.utils import (  # noqa: E402
     ExperimentConfig,
     checkpoint_path_for,
     get_logger,
+    log_file_for,
     metrics_file_for,
     parse_config_arg,
     pick_device,
@@ -176,6 +177,8 @@ def save_metrics(metrics: dict, path: Path) -> None:
 
 def main() -> None:
     cfg = parse_config_arg("Evaluate a trained projection head on the val split")
+    get_logger("evaluate", log_file=log_file_for(cfg))
+    
     set_global_seed(cfg.seed)
     device = pick_device()
 

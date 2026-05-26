@@ -26,10 +26,15 @@ from src.model import build_projection_head, load_backbone  # noqa: E402
 from src.utils import (  # noqa: E402
     ExperimentConfig,
     checkpoint_path_for,
+    curves_plot_file_for,
     get_logger,
+    history_file_for,
+    log_file_for,
     metrics_file_for,
     parse_config_arg,
     pick_device,
+    save_curves_plot,
+    save_history,
     set_global_seed,
 )
 
@@ -170,6 +175,9 @@ def save_checkpoint(head: nn.Module, path: Path) -> None:
 
 
 def run_training(cfg: ExperimentConfig) -> dict:
+    # register the log file path dynamically to start logging to results/logs/
+    get_logger("train", log_file=log_file_for(cfg))
+
     set_global_seed(cfg.seed)
     device = pick_device()
 
@@ -193,6 +201,8 @@ def run_training(cfg: ExperimentConfig) -> dict:
     ckpt_path = checkpoint_path_for(cfg)
     best_mrr = -1.0
     best_metrics: dict | None = None
+    best_epoch: int | None = None
+    history: list[dict] = []
 
     for epoch in range(1, cfg.training.epochs + 1):
         set_epoch(train_loader, epoch)
@@ -204,22 +214,35 @@ def run_training(cfg: ExperimentConfig) -> dict:
         )
         LOGGER.info("Epoch %d | train_loss=%.4f", epoch, train_loss)
 
-        if epoch % cfg.training.val_every != 0:
-            continue
+        epoch_metrics = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_mrr": "",
+            "val_top5": "",
+            "val_silhouette": "",
+        }
 
-        metrics = evaluate_loader(
-            cfg, head, val_loader, device,
-            backbone, processor, backbone_spec, epoch=epoch,
-        )
-        LOGGER.info(
-            "Epoch %d | MRR=%.4f Top-5=%.4f Silhouette=%s",
-            epoch, metrics["mrr"], metrics["top5"], metrics["silhouette"],
-        )
+        if epoch % cfg.training.val_every == 0:
+            metrics = evaluate_loader(
+                cfg, head, val_loader, device,
+                backbone, processor, backbone_spec, epoch=epoch,
+            )
+            LOGGER.info(
+                "Epoch %d | MRR=%.4f Top-5=%.4f Silhouette=%s",
+                epoch, metrics["mrr"], metrics["top5"], metrics["silhouette"],
+            )
 
-        if metrics["mrr"] > best_mrr:
-            best_mrr = metrics["mrr"]
-            best_metrics = metrics
-            save_checkpoint(head, ckpt_path)
+            epoch_metrics["val_mrr"] = metrics["mrr"]
+            epoch_metrics["val_top5"] = metrics["top5"]
+            epoch_metrics["val_silhouette"] = metrics["silhouette"] if metrics["silhouette"] is not None else ""
+
+            if metrics["mrr"] > best_mrr:
+                best_mrr = metrics["mrr"]
+                best_metrics = metrics
+                best_epoch = epoch
+                save_checkpoint(head, ckpt_path)
+
+        history.append(epoch_metrics)
 
     if best_metrics is None:
         LOGGER.warning("No validation ran; saving final weights.")
@@ -228,8 +251,11 @@ def run_training(cfg: ExperimentConfig) -> dict:
             cfg, head, val_loader, device,
             backbone, processor, backbone_spec, epoch=cfg.training.epochs,
         )
+        best_epoch = cfg.training.epochs
 
     save_metrics(best_metrics, metrics_file_for(cfg))
+    save_history(history, history_file_for(cfg))
+    save_curves_plot(history, curves_plot_file_for(cfg), best_epoch=best_epoch)
     return best_metrics
 
 
