@@ -1,10 +1,10 @@
 """Validation metrics: MRR, Top-5, Silhouette.
 
 Retrieval protocol:
-    Query   = validation segments with role ``original``.
-    Gallery = validation segments with role ``cover``.
+    Query   = validation segments with role ``cover``.
+    Gallery = validation segments with role ``original``.
     Rank gallery by cosine similarity to each query embedding.
-    A hit is a gallery segment whose ``group_id`` matches the query.
+    A hit is the gallery original whose ``group_id`` matches the cover query.
 
 Usage:
     python src/evaluate.py --config configs/<experiment>.yaml
@@ -97,8 +97,8 @@ def compute_mrr_top5(
     gid = np.array(group_ids)
     role = np.array(roles)
 
-    query_idx = np.where(role == "original")[0]
-    gallery_idx = np.where(role == "cover")[0]
+    query_idx = np.where(role == "cover")[0]
+    gallery_idx = np.where(role == "original")[0]
 
     if len(query_idx) == 0 or len(gallery_idx) == 0:
         return 0.0, 0.0
