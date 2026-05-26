@@ -187,7 +187,15 @@ def main() -> None:
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}. Run train.py first.")
 
     head = build_projection_head(cfg).to(device)
-    state = torch.load(ckpt_path, map_location=device, weights_only=False)
+    payload = torch.load(ckpt_path, map_location=device, weights_only=False)
+    if isinstance(payload, dict) and "state_dict" in payload:
+        state = payload["state_dict"]
+        best_epoch = payload.get("best_epoch")
+    else:
+        # Backwards compatibility with older checkpoints (plain state_dict).
+        state = payload
+        best_epoch = None
+
     head.load_state_dict(state)
     head.eval()
 
@@ -202,7 +210,7 @@ def main() -> None:
     _, val_loader = build_dataloaders(cfg)
     metrics = evaluate_loader(
         cfg, head, val_loader, device,
-        backbone, processor, backbone_spec, epoch=0,
+        backbone, processor, backbone_spec, epoch=int(best_epoch) if best_epoch is not None else 0,
     )
     save_metrics(metrics, metrics_file_for(cfg))
     LOGGER.info(

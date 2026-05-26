@@ -168,9 +168,13 @@ def train_one_epoch(
     return total_loss / n_batches if n_batches else 0.0
 
 
-def save_checkpoint(head: nn.Module, path: Path) -> None:
+def save_checkpoint(head: nn.Module, path: Path, *, epoch: int | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(head.state_dict(), path)
+    payload = {
+        "state_dict": head.state_dict(),
+        "best_epoch": int(epoch) if epoch is not None else None,
+    }
+    torch.save(payload, path)
     LOGGER.info("Saved checkpoint %s", path)
 
 
@@ -240,13 +244,13 @@ def run_training(cfg: ExperimentConfig) -> dict:
                 best_mrr = metrics["mrr"]
                 best_metrics = metrics
                 best_epoch = epoch
-                save_checkpoint(head, ckpt_path)
+                save_checkpoint(head, ckpt_path, epoch=epoch)
 
         history.append(epoch_metrics)
 
     if best_metrics is None:
         LOGGER.warning("No validation ran; saving final weights.")
-        save_checkpoint(head, ckpt_path)
+        save_checkpoint(head, ckpt_path, epoch=cfg.training.epochs)
         best_metrics = evaluate_loader(
             cfg, head, val_loader, device,
             backbone, processor, backbone_spec, epoch=cfg.training.epochs,
