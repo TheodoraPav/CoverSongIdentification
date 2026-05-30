@@ -289,8 +289,8 @@ def features_file_for(cfg: ExperimentConfig) -> Path:
 
 
 def experiment_id_for(cfg: ExperimentConfig) -> str:
-    """Generate a descriptive, unique identifier combining configuration fields."""
-    return f"{cfg.experiment_name}_{cfg.backbone}_{cfg.loss}_{cfg.augment}_{cfg.sampling}_seed{cfg.seed}"
+    """Return the unique experiment name."""
+    return cfg.experiment_name
 
 
 def checkpoint_path_for(cfg: ExperimentConfig) -> Path:
@@ -394,6 +394,7 @@ def save_curves_plot(history: list[dict], path: Path, best_epoch: int | None = N
 
     val_epochs = [h["epoch"] for h in history if h["val_mrr"] != ""]
     val_mrr = [h["val_mrr"] for h in history if h["val_mrr"] != ""]
+    val_top1 = [h["val_top1"] for h in history if h.get("val_top1", "") != ""]
     val_top5 = [h["val_top5"] for h in history if h["val_top5"] != ""]
 
     fig, ax1 = plt.subplots(figsize=(10, 6))
@@ -407,14 +408,16 @@ def save_curves_plot(history: list[dict], path: Path, best_epoch: int | None = N
 
     ax2 = ax1.twinx()
     color_mrr = "tab:blue"
+    color_top1 = "tab:orange"
     color_top5 = "tab:green"
     ax2.set_ylabel("Validation Metrics", color="black", fontsize=11, fontweight="bold")
     line2 = ax2.plot(val_epochs, val_mrr, color=color_mrr, marker="o", markersize=5, label="Val MRR", linewidth=1.5)
+    line_top1 = ax2.plot(val_epochs, val_top1, color=color_top1, marker="^", markersize=4, label="Val Top-1", linewidth=1.5)
     line3 = ax2.plot(val_epochs, val_top5, color=color_top5, marker="s", markersize=4, label="Val Top-5", linewidth=1.5)
     ax2.tick_params(axis="y", labelcolor="black")
     ax2.set_ylim(0.0, 1.05)
 
-    lines = line1 + line2 + line3
+    lines = line1 + line2 + line_top1 + line3
     
     if best_epoch is not None:
         best_line = ax1.axvline(x=best_epoch, color="tab:purple", linestyle="--", linewidth=1.5, alpha=0.85, label=f"Best Epoch ({best_epoch})")

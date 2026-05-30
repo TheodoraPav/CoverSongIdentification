@@ -204,6 +204,7 @@ def run_training(cfg: ExperimentConfig) -> dict:
             "epoch": epoch,
             "train_loss": train_loss,
             "val_mrr": "",
+            "val_top1": "",
             "val_top5": "",
             "val_silhouette": "",
         }
@@ -219,6 +220,7 @@ def run_training(cfg: ExperimentConfig) -> dict:
             )
 
             epoch_metrics["val_mrr"] = metrics["mrr"]
+            epoch_metrics["val_top1"] = metrics["top1"]
             epoch_metrics["val_top5"] = metrics["top5"]
             epoch_metrics["val_silhouette"] = metrics["silhouette"] if metrics["silhouette"] is not None else ""
 
