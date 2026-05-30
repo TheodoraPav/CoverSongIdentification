@@ -43,12 +43,12 @@ import torch
 import yaml
 
 # Allowed config enum values.
-AUGMENTS = ("none", "time", "spec")
-AUGMENT_MODES = ("offline", "online")
+AUGMENTS = ("none", "time")
 SAMPLINGS = ("random", "stratified", "beat", "mixed")
 LOSSES = ("triplet", "triplet_hard", "ntxent")
 POOLS = ("mean", "max")
-BACKBONES = ("mert", "mert_large", "hubert", "ast")
+BACKBONES = ("mert", "mert_large")
+EVAL_LEVELS = ("segment", "track_pool", "track_dtw")
 
 
 # -----------------------------------------------------------------------------
@@ -100,33 +100,27 @@ class ExperimentConfig:
     sample_rate: int = 24000
     projection: ProjectionConfig = field(default_factory=ProjectionConfig)
     augment: str = "none"
-    augment_mode: str = "offline"
     sampling: str = "random"
     loss: str = "ntxent"
     pool: str = "mean"
     segments_per_track: int = 5
     segment_seconds: float = 5.0
     seed: int = 42
+    eval_level: str = "segment"
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
     def validate(self) -> None:
         enum_fields = (
             ("backbone", self.backbone, BACKBONES),
             ("augment", self.augment, AUGMENTS),
-            ("augment_mode", self.augment_mode, AUGMENT_MODES),
             ("sampling", self.sampling, SAMPLINGS),
             ("loss", self.loss, LOSSES),
             ("pool", self.pool, POOLS),
+            ("eval_level", self.eval_level, EVAL_LEVELS),
         )
         for name, value, allowed in enum_fields:
             _ensure_in(name, value, allowed)
 
-        # SpecAugment is AST-only.
-        if self.augment == "spec" and self.backbone != "ast":
-            raise ValueError(
-                "augment='spec' requires backbone='ast' "
-                f"(got backbone={self.backbone!r})"
-            )
         if self.segments_per_track < 1:
             raise ValueError("segments_per_track must be >= 1")
         if self.segment_seconds <= 0:
@@ -171,13 +165,13 @@ def load_config(path: str | os.PathLike) -> ExperimentConfig:
         sample_rate=raw.get("sample_rate", 24000),
         projection=projection,
         augment=raw.get("augment", "none"),
-        augment_mode=raw.get("augment_mode", "offline"),
         sampling=raw.get("sampling", "random"),
         loss=raw.get("loss", "ntxent"),
         pool=raw.get("pool", "mean"),
         segments_per_track=raw.get("segments_per_track", 5),
         segment_seconds=raw.get("segment_seconds", 5.0),
         seed=raw.get("seed", 42),
+        eval_level=raw.get("eval_level", "segment"),
         training=training,
     )
     cfg.validate()

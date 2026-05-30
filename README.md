@@ -1,8 +1,6 @@
 # Cover Song Identification
 
-Metric-learning pipeline for cover-song retrieval: frozen audio backbones (MERT, HuBERT, AST), trainable projection head, and ablations on augmentation, loss, and segment sampling.
-
-**Runtime target:** Google Colab or Kaggle (GPU). Audio and large artifacts live on Drive or local disk, not in Git.
+Metric-learning pipeline for cover-song retrieval: frozen audio backbones (MERT, MERT-Large), trainable projection head, and ablations on augmentation, loss, and segment sampling.
 
 ## What is in Git
 

@@ -31,7 +31,7 @@ if __package__ in (None, ""):
 
 from src.dataset import build_dataloaders  # noqa: E402
 from src.extract_features import pooled_features_from_batch  # noqa: E402
-from src.model import build_projection_head, load_backbone  # noqa: E402
+from src.model import build_projection_head  # noqa: E402
 from src.utils import (  # noqa: E402
     ExperimentConfig,
     checkpoint_path_for,
@@ -58,14 +58,8 @@ def collect_embeddings_before_after(
         head: nn.Module,
         loader: DataLoader,
         device: torch.device,
-        backbone: nn.Module | None = None,
-        processor: object | None = None,
-        backbone_spec=None,
 ) -> dict:
     head.eval()
-    if backbone is not None:
-        backbone.eval()
-
     raw_list: list[torch.Tensor] = []
     z_list: list[torch.Tensor] = []
     group_ids: list[int] = []
@@ -75,7 +69,7 @@ def collect_embeddings_before_after(
     for batch in tqdm(loader, desc="Extracting visualizer features"):
         # extract pooled backbone features (raw)
         pooled = pooled_features_from_batch(
-            batch, cfg, device, backbone, processor, backbone_spec, epoch=0,
+            batch, device,
         )
         # extract projected embeddings (after projection head)
         z = head(pooled)
@@ -348,18 +342,9 @@ def main() -> None:
     head.load_state_dict(state)
     head.eval()
 
-    backbone = None
-    processor = None
-    backbone_spec = None
-    if cfg.augment_mode == "online":
-        LOGGER.info("Online mode: loading frozen backbone %s", cfg.backbone)
-        backbone, processor, backbone_spec = load_backbone(
-            cfg.backbone, cfg.backbone_checkpoint, device=device,
-        )
-
     # collect embeddings before vs after
     embeddings = collect_embeddings_before_after(
-        cfg, head, val_loader, device, backbone, processor, backbone_spec
+        cfg, head, val_loader, device
     )
 
     # average embeddings to track level for a clean UMAP visualization

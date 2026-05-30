@@ -19,8 +19,8 @@
             "sampling": "random",
             "loss": "ntxent",
             "augment": "none",
-            "augment_mode": "offline",
-            "pool": "mean"
+            "pool": "mean",
+            "eval_level": "track_dtw"
           }
         },
         {
@@ -32,34 +32,8 @@
             "sampling": "random",
             "loss": "ntxent",
             "augment": "none",
-            "augment_mode": "offline",
-            "pool": "mean"
-          }
-        },
-        {
-          "name": "p1_hubert",
-          "description": "Backbone comparison: HuBERT base.",
-          "overrides": {
-            "backbone": "hubert",
-            "backbone_checkpoint": "facebook/hubert-base-ls960",
-            "sampling": "random",
-            "loss": "ntxent",
-            "augment": "none",
-            "augment_mode": "offline",
-            "pool": "mean"
-          }
-        },
-        {
-          "name": "p1_ast",
-          "description": "Backbone comparison: AST (mel spectrogram backbone).",
-          "overrides": {
-            "backbone": "ast",
-            "backbone_checkpoint": "MIT/ast-finetuned-audioset-10-10-0.4593",
-            "sampling": "random",
-            "loss": "ntxent",
-            "augment": "none",
-            "augment_mode": "offline",
-            "pool": "mean"
+            "pool": "mean",
+            "eval_level": "track_dtw"
           }
         }
       ],
@@ -74,26 +48,49 @@
           "name": "p2_sampling_stratified",
           "description": "Stratified sampling with Phase 1 winner backbone.",
           "uses_winner": "BEST_BACKBONE",
-          "overrides": { "sampling": "stratified", "pool": "mean", "loss": "ntxent", "augment": "none", "augment_mode": "offline" }
+          "overrides": {
+            "sampling": "stratified",
+            "pool": "mean",
+            "loss": "ntxent",
+            "augment": "none",
+            "eval_level": "track_dtw"
+          }
         },
         {
           "name": "p2_sampling_beat",
           "description": "Beat-aligned sampling with Phase 1 winner backbone.",
           "uses_winner": "BEST_BACKBONE",
-          "overrides": { "sampling": "beat", "pool": "mean", "loss": "ntxent", "augment": "none", "augment_mode": "offline" }
+          "overrides": {
+            "sampling": "beat",
+            "pool": "mean",
+            "loss": "ntxent",
+            "augment": "none",
+            "eval_level": "track_dtw"
+          }
         },
         {
           "name": "p2_sampling_mixed",
           "description": "Mixed (variable-length) sampling with Phase 1 winner backbone.",
           "uses_winner": "BEST_BACKBONE",
-          "overrides": { "sampling": "mixed", "pool": "mean", "loss": "ntxent", "augment": "none", "augment_mode": "offline" }
+          "overrides": {
+            "sampling": "mixed",
+            "pool": "mean",
+            "loss": "ntxent",
+            "augment": "none",
+            "eval_level": "track_dtw"
+          }
         },
         {
           "name": "p2_pool_max",
           "description": "Max pooling ablation using Phase 1 winner backbone and Phase 2 winner sampling.",
           "uses_winner": "BEST_BACKBONE",
           "uses_winner_sampling": "BEST_SAMPLING",
-          "overrides": { "pool": "max", "loss": "ntxent", "augment": "none", "augment_mode": "offline" }
+          "overrides": {
+            "pool": "max",
+            "loss": "ntxent",
+            "augment": "none",
+            "eval_level": "track_dtw"
+          }
         }
       ],
       "winner_key_sampling": "BEST_SAMPLING",
@@ -110,7 +107,11 @@
           "uses_winner": "BEST_BACKBONE",
           "uses_winner_sampling": "BEST_SAMPLING",
           "uses_winner_pool": "BEST_POOL",
-          "overrides": { "loss": "triplet", "augment": "none", "augment_mode": "offline" }
+          "overrides": {
+            "loss": "triplet",
+            "augment": "none",
+            "eval_level": "track_dtw"
+          }
         },
         {
           "name": "p3_triplet_hard",
@@ -118,7 +119,11 @@
           "uses_winner": "BEST_BACKBONE",
           "uses_winner_sampling": "BEST_SAMPLING",
           "uses_winner_pool": "BEST_POOL",
-          "overrides": { "loss": "triplet_hard", "augment": "none", "augment_mode": "offline" }
+          "overrides": {
+            "loss": "triplet_hard",
+            "augment": "none",
+            "eval_level": "track_dtw"
+          }
         }
       ],
       "winner_key": "BEST_LOSS"
@@ -126,7 +131,7 @@
     {
       "id": "phase4_augment",
       "title": "Augmentations",
-      "description": "Run time augmentation in offline/online modes for the locked best setup; optionally add AST SpecAugment when backbone is AST.",
+      "description": "Run time augmentation for the locked best setup.",
       "experiments": [
         {
           "name": "p4_time_offline",
@@ -135,29 +140,54 @@
           "uses_winner_sampling": "BEST_SAMPLING",
           "uses_winner_pool": "BEST_POOL",
           "uses_winner_loss": "BEST_LOSS",
-          "overrides": { "augment": "time", "augment_mode": "offline" }
-        },
-        {
-          "name": "p4_time_online",
-          "description": "Time augmentation, online mode.",
-          "uses_winner": "BEST_BACKBONE",
-          "uses_winner_sampling": "BEST_SAMPLING",
-          "uses_winner_pool": "BEST_POOL",
-          "uses_winner_loss": "BEST_LOSS",
-          "overrides": { "augment": "time", "augment_mode": "online" }
-        },
-        {
-          "name": "p4_ast_spec_online",
-          "description": "AST-only: SpecAugment, online mode (only valid when backbone is AST).",
-          "requires": { "backbone": "ast" },
-          "uses_winner": "BEST_BACKBONE",
-          "uses_winner_sampling": "BEST_SAMPLING",
-          "uses_winner_pool": "BEST_POOL",
-          "uses_winner_loss": "BEST_LOSS",
-          "overrides": { "augment": "spec", "augment_mode": "online" }
+          "overrides": {
+            "augment": "time",
+            "eval_level": "track_dtw"
+          }
         }
-      ]
+      ],
+      "winner_key": "BEST_AUGMENT"
+    },
+    {
+      "id": "phase5_eval_level",
+      "title": "Evaluation Level / Retrieval Method",
+      "description": "Compare segment-level retrieval against track-level average pooling and sequence alignment (DTW).",
+      "experiments": [
+        {
+          "name": "p5_eval_segment",
+          "description": "Segment-level retrieval baseline.",
+          "uses_winner": "BEST_BACKBONE",
+          "uses_winner_sampling": "BEST_SAMPLING",
+          "uses_winner_pool": "BEST_POOL",
+          "uses_winner_loss": "BEST_LOSS",
+          "overrides": {
+            "eval_level": "segment"
+          }
+        },
+        {
+          "name": "p5_eval_track_pool",
+          "description": "Track-level mean pooling retrieval.",
+          "uses_winner": "BEST_BACKBONE",
+          "uses_winner_sampling": "BEST_SAMPLING",
+          "uses_winner_pool": "BEST_POOL",
+          "uses_winner_loss": "BEST_LOSS",
+          "overrides": {
+            "eval_level": "track_pool"
+          }
+        },
+        {
+          "name": "p5_eval_track_dtw",
+          "description": "Track-level sequence alignment (DTW) retrieval.",
+          "uses_winner": "BEST_BACKBONE",
+          "uses_winner_sampling": "BEST_SAMPLING",
+          "uses_winner_pool": "BEST_POOL",
+          "uses_winner_loss": "BEST_LOSS",
+          "overrides": {
+            "eval_level": "track_dtw"
+          }
+        }
+      ],
+      "winner_key": "BEST_EVAL_LEVEL"
     }
   ]
 }
-

@@ -27,7 +27,7 @@ if __package__ in (None, ""):
 
 from src.dataset import build_dataloaders  # noqa: E402
 from src.extract_features import pooled_features_from_batch  # noqa: E402
-from src.model import build_projection_head, load_backbone  # noqa: E402
+from src.model import build_projection_head  # noqa: E402
 from src.utils import (  # noqa: E402
     ExperimentConfig,
     checkpoint_path_for,
@@ -53,32 +53,31 @@ def collect_projected_embeddings(
         head: nn.Module,
         loader: DataLoader,
         device: torch.device,
-        backbone: nn.Module | None = None,
-        processor: object | None = None,
-        backbone_spec=None,
         epoch: int = 0,
 ) -> dict:
     head.eval()
-    if backbone is not None:
-        backbone.eval()
-
     z_list: list[torch.Tensor] = []
     group_ids: list[int] = []
     roles: list[str] = []
+    track_ids: list[str] = []
+    seg_ids: list[int] = []
 
     for batch in loader:
         pooled = pooled_features_from_batch(
-            batch, cfg, device, backbone, processor, backbone_spec, epoch,
-        )
+            batch, device)
         z = head(pooled)
         z_list.append(z.cpu())
         group_ids.extend(int(g) for g in batch["group_id"].tolist())
         roles.extend(batch["role"])
+        track_ids.extend(batch["track_id"])
+        seg_ids.extend(int(s) for s in batch["seg_id"].tolist())
 
     return {
         "z": torch.cat(z_list, dim=0),
         "group_id": group_ids,
         "role": roles,
+        "track_id": track_ids,
+        "seg_id": seg_ids,
     }
 
 
@@ -87,12 +86,11 @@ def collect_projected_embeddings(
 # -----------------------------------------------------------------------------
 
 
-def compute_mrr_top5(
+def compute_mrr_top1_top5(
         z: torch.Tensor,
         group_ids: list[int],
         roles: list[str],
-        top_k: int = 5,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     z = F.normalize(z.float(), p=2, dim=1)
     gid = np.array(group_ids)
     role = np.array(roles)
@@ -101,13 +99,14 @@ def compute_mrr_top5(
     gallery_idx = np.where(role == "original")[0]
 
     if len(query_idx) == 0 or len(gallery_idx) == 0:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
 
     sims = (z[query_idx] @ z[gallery_idx].T).cpu().numpy()
     gid_g = gid[gallery_idx]
 
     reciprocal_ranks: list[float] = []
-    top_hits = 0
+    top1_hits = 0
+    top5_hits = 0
 
     for i, qi in enumerate(query_idx):
         order = np.argsort(-sims[i])
@@ -118,12 +117,15 @@ def compute_mrr_top5(
             continue
         rank = int(hits[0]) + 1
         reciprocal_ranks.append(1.0 / rank)
-        if rank <= top_k:
-            top_hits += 1
+        if rank <= 1:
+            top1_hits += 1
+        if rank <= 5:
+            top5_hits += 1
 
     mrr = float(np.mean(reciprocal_ranks))
-    top5 = float(top_hits / len(query_idx))
-    return mrr, top5
+    top1 = float(top1_hits / len(query_idx))
+    top5 = float(top5_hits / len(query_idx))
+    return mrr, top1, top5
 
 
 def compute_silhouette(z: torch.Tensor, group_ids: list[int]) -> float | None:
@@ -137,6 +139,134 @@ def compute_silhouette(z: torch.Tensor, group_ids: list[int]) -> float | None:
     return float(silhouette_score(z.float().cpu().numpy(), labels, metric="cosine"))
 
 
+def compute_dtw_distance(s1: np.ndarray, s2: np.ndarray) -> float:
+    """Compute the Dynamic Time Warping (DTW) distance using Cosine Distance.
+    
+    Args:
+        s1: Normalized sequence array of shape (N, D)
+        s2: Normalized sequence array of shape (M, D)
+        
+    Returns:
+        The DTW distance normalized by path length.
+    """
+    n, d = s1.shape
+    m, _ = s2.shape
+    
+    # Cosine distance grid (already normalized)
+    dist_matrix = 1.0 - np.dot(s1, s2.T)
+    
+    # DP table
+    dp = np.zeros((n, m))
+    dp[0, 0] = dist_matrix[0, 0]
+    
+    for i in range(1, n):
+        dp[i, 0] = dp[i-1, 0] + dist_matrix[i, 0]
+        
+    for j in range(1, m):
+        dp[0, j] = dp[0, j-1] + dist_matrix[0, j]
+        
+    for i in range(1, n):
+        for j in range(1, m):
+            dp[i, j] = dist_matrix[i, j] + min(dp[i-1, j], dp[i, j-1], dp[i-1, j-1])
+            
+    return float(dp[-1, -1] / (n + m))
+
+
+def _rank_and_evaluate(
+        scores: np.ndarray,
+        query_gids: np.ndarray,
+        gallery_gids: np.ndarray,
+        descending: bool = True,
+) -> dict:
+    """Rank gallery elements for each query and calculate MRR, Top-1, and Top-5 scores."""
+    reciprocal_ranks = []
+    top1_hits = 0
+    top5_hits = 0
+    
+    for i in range(len(query_gids)):
+        order = np.argsort(-scores[i]) if descending else np.argsort(scores[i])
+        ranked_gids = gallery_gids[order]
+        hits = np.where(ranked_gids == query_gids[i])[0]
+        if hits.size == 0:
+            reciprocal_ranks.append(0.0)
+            continue
+        rank = int(hits[0]) + 1
+        reciprocal_ranks.append(1.0 / rank)
+        if rank <= 1:
+            top1_hits += 1
+        if rank <= 5:
+            top5_hits += 1
+            
+    return {
+        "mrr": float(np.mean(reciprocal_ranks)),
+        "top1": float(top1_hits / len(query_gids)),
+        "top5": float(top5_hits / len(query_gids)),
+    }
+
+
+def evaluate_track_level(data: dict) -> tuple[dict, dict]:
+    """Compute track-level evaluation metrics: Pooling (Early Fusion) and Sequence DTW.
+    
+    Args:
+        data: A dictionary containing z, group_id, role, track_id, and seg_id.
+            
+    Returns:
+        A tuple of dictionaries: (pool_metrics, dtw_metrics)
+    """
+    z = data["z"].float().cpu().numpy()
+    # Normalize segment embeddings once for both Mean Pooling and Sequence DTW
+    z_norm = z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-9)
+    
+    group_ids = np.array(data["group_id"])
+    roles = np.array(data["role"])
+    track_ids = np.array(data["track_id"])
+    seg_ids = np.array(data["seg_id"])
+    
+    unique_tracks = np.unique(track_ids)
+    
+    track_sequences = {}
+    track_info = {}
+    
+    for tid in unique_tracks:
+        idx = np.where(track_ids == tid)[0]
+        # Sort by seg_id to maintain sequence order
+        sorted_idx = idx[np.argsort(seg_ids[idx])]
+        track_sequences[tid] = z_norm[sorted_idx]
+        track_info[tid] = (group_ids[idx[0]], roles[idx[0]])
+        
+    query_tids = [tid for tid, info in track_info.items() if info[1] == "cover"]
+    gallery_tids = [tid for tid, info in track_info.items() if info[1] == "original"]
+    
+    if len(query_tids) == 0 or len(gallery_tids) == 0:
+        empty = {"mrr": 0.0, "top1": 0.0, "top5": 0.0}
+        return empty, empty
+        
+    query_gids = np.array([track_info[tid][0] for tid in query_tids])
+    gallery_gids = np.array([track_info[tid][0] for tid in gallery_tids])
+    
+    # --- Track Pooling evaluation (Early Fusion) ---
+    query_pooled = np.stack([track_sequences[tid].mean(axis=0) for tid in query_tids], axis=0)
+    gallery_pooled = np.stack([track_sequences[tid].mean(axis=0) for tid in gallery_tids], axis=0)
+    
+    qp_norm = query_pooled / (np.linalg.norm(query_pooled, axis=1, keepdims=True) + 1e-9)
+    gp_norm = gallery_pooled / (np.linalg.norm(gallery_pooled, axis=1, keepdims=True) + 1e-9)
+    
+    sims = np.dot(qp_norm, gp_norm.T)
+    pool_metrics = _rank_and_evaluate(sims, query_gids, gallery_gids, descending=True)
+    
+    # --- Track DTW evaluation (Late Fusion sequence alignment) ---
+    dtw_distances = np.zeros((len(query_tids), len(gallery_tids)))
+    for i, q_tid in enumerate(query_tids):
+        s_q = track_sequences[q_tid]
+        for j, g_tid in enumerate(gallery_tids):
+            s_g = track_sequences[g_tid]
+            dtw_distances[i, j] = compute_dtw_distance(s_q, s_g)
+            
+    dtw_metrics = _rank_and_evaluate(dtw_distances, query_gids, gallery_gids, descending=False)
+    
+    return pool_metrics, dtw_metrics
+
+
 def evaluate_loader(
         cfg: ExperimentConfig,
         head: nn.Module,
@@ -148,18 +278,79 @@ def evaluate_loader(
         epoch: int = 0,
 ) -> dict:
     data = collect_projected_embeddings(
-        cfg, head, loader, device, backbone, processor, backbone_spec, epoch,
+        cfg, head, loader, device, epoch,
     )
-    mrr, top5 = compute_mrr_top5(data["z"], data["group_id"], data["role"])
+    
+    # Segment-level (baseline) metrics
+    mrr, top1, top5 = compute_mrr_top1_top5(data["z"], data["group_id"], data["role"])
     sil = compute_silhouette(data["z"], data["group_id"])
+
+    # Track-level metrics
+    pool_metrics, dtw_metrics = evaluate_track_level(data)
+    
+    track_pool_mrr = pool_metrics["mrr"]
+    track_pool_top1 = pool_metrics["top1"]
+    track_pool_top5 = pool_metrics["top5"]
+    
+    track_dtw_mrr = dtw_metrics["mrr"]
+    track_dtw_top1 = dtw_metrics["top1"]
+    track_dtw_top5 = dtw_metrics["top5"]
+
+    # Show formatted comparison table
+    seg_sel = " [Selected]" if cfg.eval_level == "segment" else ""
+    pool_sel = " [Selected]" if cfg.eval_level == "track_pool" else ""
+    dtw_sel = " [Selected]" if cfg.eval_level == "track_dtw" else ""
+    
+    LOGGER.info("=" * 75)
+    LOGGER.info("EVALUATION LEVEL COMPARISON (mrr / top1 / top5)")
+    LOGGER.info("=" * 75)
+    LOGGER.info("Segment-Level (Baseline) : %.4f / %.4f / %.4f%s", mrr, top1, top5, seg_sel)
+    LOGGER.info("Track-Level Mean Pooling : %.4f / %.4f / %.4f%s", track_pool_mrr, track_pool_top1, track_pool_top5, pool_sel)
+    LOGGER.info("Track-Level Sequence DTW : %.4f / %.4f / %.4f%s", track_dtw_mrr, track_dtw_top1, track_dtw_top5, dtw_sel)
+    LOGGER.info("=" * 75)
+
+    # Map primary metrics based on configured eval_level
+    if cfg.eval_level == "segment":
+        primary_mrr = mrr
+        primary_top1 = top1
+        primary_top5 = top5
+    elif cfg.eval_level == "track_pool":
+        primary_mrr = track_pool_mrr
+        primary_top1 = track_pool_top1
+        primary_top5 = track_pool_top5
+    elif cfg.eval_level == "track_dtw":
+        primary_mrr = track_dtw_mrr
+        primary_top1 = track_dtw_top1
+        primary_top5 = track_dtw_top5
+    else:
+        primary_mrr = mrr
+        primary_top1 = top1
+        primary_top5 = top5
 
     return {
         "experiment_name": cfg.experiment_name,
-        "mrr": round(mrr, 6),
-        "top5": round(top5, 6),
+        "mrr": round(primary_mrr, 6),
+        "top1": round(primary_top1, 6),
+        "top5": round(primary_top5, 6),
         "silhouette": round(sil, 6) if sil is not None else None,
         "n_segments": int(data["z"].shape[0]),
         "epoch": int(epoch),
+        "eval_level_config": cfg.eval_level,
+        
+        # Detailed segment metrics
+        "segment_mrr": round(mrr, 6),
+        "segment_top1": round(top1, 6),
+        "segment_top5": round(top5, 6),
+        
+        # Detailed track pool metrics
+        "track_pool_mrr": round(track_pool_mrr, 6),
+        "track_pool_top1": round(track_pool_top1, 6),
+        "track_pool_top5": round(track_pool_top5, 6),
+        
+        # Detailed track dtw metrics
+        "track_dtw_mrr": round(track_dtw_mrr, 6),
+        "track_dtw_top1": round(track_dtw_top1, 6),
+        "track_dtw_top5": round(track_dtw_top5, 6),
     }
 
 
@@ -199,23 +390,15 @@ def main() -> None:
     head.load_state_dict(state)
     head.eval()
 
-    backbone = None
-    processor = None
-    backbone_spec = None
-    if cfg.augment_mode == "online":
-        backbone, processor, backbone_spec = load_backbone(
-            cfg.backbone, cfg.backbone_checkpoint, device=device,
-        )
-
     _, val_loader = build_dataloaders(cfg)
     metrics = evaluate_loader(
         cfg, head, val_loader, device,
-        backbone, processor, backbone_spec, epoch=int(best_epoch) if best_epoch is not None else 0,
+        None, None, None, epoch=int(best_epoch) if best_epoch is not None else 0,
     )
     save_metrics(metrics, metrics_file_for(cfg))
     LOGGER.info(
-        "MRR=%.4f Top-5=%.4f Silhouette=%s",
-        metrics["mrr"], metrics["top5"], metrics["silhouette"],
+        "MRR=%.4f Top-1=%.4f Top-5=%.4f Silhouette=%s",
+        metrics["mrr"], metrics["top1"], metrics["top5"], metrics["silhouette"],
     )
 
 

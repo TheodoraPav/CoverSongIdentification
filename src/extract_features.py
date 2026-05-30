@@ -9,8 +9,7 @@ Usage:
     python src/extract_features.py --config configs/<experiment>.yaml --batch-size 4
 
 This module also exposes helpers used by `train.py` and `evaluate.py`:
-    forward_batch, pooled_features_from_batch, batch_seeds, batch_waveforms,
-    forward_augment_flag.
+    forward_batch, pooled_features_from_batch.
 """
 
 from __future__ import annotations
@@ -29,7 +28,6 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.augmentations import (  # noqa: E402
-    apply_spec_augment,
     apply_waveform_augment,
     build_time_augmenter,
     length_fix,
@@ -148,7 +146,7 @@ def prepare_waveform(
 
 
 # -----------------------------------------------------------------------------
-# Backbone forward for a batch (handles AST SpecAugment via `mel_transform`)
+# Backbone forward for a batch
 # -----------------------------------------------------------------------------
 
 
@@ -157,18 +155,10 @@ def forward_batch(
     processor: object,
     spec,
     waveforms: list[np.ndarray],
-    seeds: list[int],
-    augment: str,
     pool: str,
     device: torch.device,
 ) -> torch.Tensor:
     """Run frozen backbone + pooling on a list of 1D waveforms."""
-    mel_transform = None
-    if spec.input_type == "mel" and augment == "spec":
-        def mel_transform(mels: torch.Tensor) -> torch.Tensor:
-            rows = [apply_spec_augment(mels[i], seeds[i]) for i in range(mels.shape[0])]
-            return torch.stack(rows)
-
     hidden, mask = backbone_forward(
         model,
         processor,
@@ -176,7 +166,7 @@ def forward_batch(
         spec.sample_rate,
         spec,
         device=device,
-        mel_transform=mel_transform,
+        mel_transform=None,
     )
     return pool_backbone_output(hidden, mask, method=pool)
 
@@ -184,63 +174,12 @@ def forward_batch(
 # -----------------------------------------------------------------------------
 # Per-batch helpers shared with train.py and evaluate.py
 # -----------------------------------------------------------------------------
-
-
-def forward_augment_flag(cfg: ExperimentConfig) -> str:
-    """Return the augment flag understood by `forward_batch` ('spec' or 'none').
-
-    `time` augmentation is applied earlier inside the dataset, so only `spec`
-    needs to propagate to the forward pass.
-    """
-    if cfg.augment == "spec" and cfg.backbone == "ast":
-        return "spec"
-    return "none"
-
-
-def batch_seeds(cfg: ExperimentConfig, batch: dict, epoch: int) -> list[int]:
-    """Per-segment seeds for an online batch (re-randomizes aug per epoch)."""
-    gids = batch["group_id"].tolist()
-    sids = batch["seg_id"].tolist()
-    offset = cfg.seed + epoch * 1_000_003
-    return [segment_seed(offset, gids[i], sids[i]) for i in range(len(gids))]
-
-
-def batch_waveforms(batch: dict) -> list[np.ndarray]:
-    """Unpack a padded `collate_online` batch into a list of 1D float32 arrays."""
-    waveforms = batch["waveforms"]
-    lengths = batch["lengths"]
-    out = []
-    for i in range(waveforms.shape[0]):
-        n = int(lengths[i].item())
-        out.append(waveforms[i, :n].cpu().numpy().astype(np.float32))
-    return out
-
-
 def pooled_features_from_batch(
     batch: dict,
-    cfg: ExperimentConfig,
     device: torch.device,
-    backbone: torch.nn.Module | None,
-    processor: object | None,
-    backbone_spec,
-    epoch: int,
 ) -> torch.Tensor:
     """Return pooled L2-normalized backbone features for a DataLoader batch."""
-    if cfg.augment_mode == "offline":
-        return batch["features"].to(device)
-
-    waveforms = batch_waveforms(batch)
-    seeds = batch_seeds(cfg, batch, epoch)
-    return forward_batch(
-        backbone,
-        processor,
-        backbone_spec,
-        waveforms,
-        seeds,
-        forward_augment_flag(cfg),
-        cfg.pool,
-        device,
-    )
+    return batch["features"].to(device)
 
 
 # -----------------------------------------------------------------------------
@@ -250,12 +189,6 @@ def pooled_features_from_batch(
 
 def should_apply_offline_augment(cfg: ExperimentConfig) -> bool:
     if cfg.augment == "none":
-        return False
-    if cfg.augment_mode != "offline":
-        LOGGER.info(
-            "augment_mode=%r: caching without augmentation (aug runs in train).",
-            cfg.augment_mode,
-        )
         return False
     return True
 
@@ -357,7 +290,7 @@ def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
             continue
 
         pooled = forward_batch(
-            model, processor, spec, waveforms, seeds, augment_flag, cfg.pool, device
+            model, processor, spec, waveforms, cfg.pool, device
         )
 
         for i, row in enumerate(ok_rows):
@@ -393,7 +326,6 @@ def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
         "backbone": cfg.backbone,
         "backbone_checkpoint": cfg.backbone_checkpoint,
         "augment": augment_flag,
-        "augment_mode": cfg.augment_mode,
         "sampling": cfg.sampling,
         "pool": cfg.pool,
         "experiment_name": cfg.experiment_name,

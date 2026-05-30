@@ -1,18 +1,11 @@
 """PyTorch datasets and DataLoaders for training and evaluation.
 
-`augment_mode: offline` (default)
-    Loads pooled vectors from `features.pt` produced by `extract_features.py`.
-
-`augment_mode: online`
-    Loads wav segments from `segments.csv` and applies augmentation each epoch
-    (fresh randomness via `set_epoch`).
+Loads pooled vectors from `features.pt` produced by `extract_features.py`.
 
 Public API:
     split_group_ids(cfg, all_group_ids) -> (train_groups, val_groups)
     CachedFeatureDataset
-    OnlineSegmentDataset
     build_dataloaders(cfg) -> (train_loader, val_loader)
-    set_epoch(loader, epoch)
 """
 
 from __future__ import annotations
@@ -28,21 +21,9 @@ from torch.utils.data import DataLoader, Dataset
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.augmentations import (  # noqa: E402
-    apply_waveform_augment,
-    build_time_augmenter,
-    length_fix,
-)
-from src.extract_features import (  # noqa: E402
-    load_segment_waveform,
-    load_segments_table,
-)
-from src.model import get_backbone_spec  # noqa: E402
 from src.utils import (  # noqa: E402
     ExperimentConfig,
     features_file_for,
-    resolve_audio_path,
-    segment_seed,
 )
 
 # -----------------------------------------------------------------------------
@@ -84,7 +65,7 @@ def load_feature_cache(path: Path) -> dict:
     if not path.is_file():
         raise FileNotFoundError(
             f"Feature cache not found: {path}. "
-            "Run extract_features.py first (augment_mode: offline)."
+            "Run extract_features.py first."
         )
     try:
         payload = torch.load(path, map_location="cpu", weights_only=False)
@@ -104,7 +85,7 @@ def _check_cache_matches_cfg(payload: dict, cfg: ExperimentConfig) -> None:
                 "Re-run extract_features.py with this config."
             )
 
-    if cfg.augment_mode == "offline" and cfg.augment != "none":
+    if cfg.augment != "none":
         cached_aug = payload.get("augment", "none")
         if cached_aug != cfg.augment:
             raise ValueError(
@@ -147,65 +128,6 @@ class CachedFeatureDataset(Dataset):
 
 
 # -----------------------------------------------------------------------------
-# Raw segments (online mode)
-# -----------------------------------------------------------------------------
-
-
-class OnlineSegmentDataset(Dataset):
-    """Load wav clips; augmentation changes each epoch via `set_epoch`."""
-
-    def __init__(
-        self,
-        cfg: ExperimentConfig,
-        segments: pd.DataFrame,
-        indices: list[int],
-    ) -> None:
-        self.cfg = cfg
-        self.segments = segments
-        self.indices = indices
-        self.epoch = 0
-        self.backbone_spec = get_backbone_spec(cfg.backbone)
-        self.time_augmenter = build_time_augmenter() if cfg.augment == "time" else None
-
-    def set_epoch(self, epoch: int) -> None:
-        self.epoch = int(epoch)
-
-    def __len__(self) -> int:
-        return len(self.indices)
-
-    def __getitem__(self, i: int) -> dict:
-        row = self.segments.iloc[self.indices[i]]
-        audio_path = resolve_audio_path(self.cfg, str(row["audio_path"]))
-        sr = self.backbone_spec.sample_rate
-
-        wav = load_segment_waveform(
-            audio_path,
-            float(row["start_sec"]),
-            float(row["end_sec"]),
-            sr,
-        )
-
-        gid = int(row["group_id"])
-        sid = int(row["seg_id"])
-
-        if self.time_augmenter is not None:
-            seed = segment_seed(self.cfg.seed + self.epoch * 1_000_003, gid, sid)
-            wav = apply_waveform_augment(self.time_augmenter, wav, sr, seed)
-
-        if self.cfg.sampling != "mixed":
-            target_len = int(round(self.cfg.segment_seconds * sr))
-            wav = length_fix(wav, target_len)
-
-        return {
-            "waveform": torch.from_numpy(wav),
-            "group_id": gid,
-            "role": str(row["role"]),
-            "track_id": str(row["track_id"]),
-            "seg_id": sid,
-        }
-
-
-# -----------------------------------------------------------------------------
 # Collate
 # -----------------------------------------------------------------------------
 
@@ -213,26 +135,6 @@ class OnlineSegmentDataset(Dataset):
 def collate_cached(batch: list[dict]) -> dict:
     return {
         "features": torch.stack([b["feature"] for b in batch], dim=0),
-        "group_id": torch.tensor([b["group_id"] for b in batch], dtype=torch.long),
-        "role": [b["role"] for b in batch],
-        "track_id": [b["track_id"] for b in batch],
-        "seg_id": torch.tensor([b["seg_id"] for b in batch], dtype=torch.long),
-    }
-
-
-def collate_online(batch: list[dict]) -> dict:
-    waveforms = [b["waveform"] for b in batch]
-    max_len = max(w.shape[0] for w in waveforms)
-    padded = torch.zeros(len(waveforms), max_len, dtype=torch.float32)
-    lengths = torch.zeros(len(waveforms), dtype=torch.long)
-    for i, w in enumerate(waveforms):
-        n = w.shape[0]
-        padded[i, :n] = w
-        lengths[i] = n
-
-    return {
-        "waveforms": padded,
-        "lengths": lengths,
         "group_id": torch.tensor([b["group_id"] for b in batch], dtype=torch.long),
         "role": [b["role"] for b in batch],
         "track_id": [b["track_id"] for b in batch],
@@ -288,44 +190,11 @@ def build_cached_datasets(
     return train_ds, val_ds
 
 
-def build_online_datasets(
-    cfg: ExperimentConfig,
-) -> tuple[OnlineSegmentDataset, OnlineSegmentDataset]:
-    segments = load_segments_table(cfg)
-    group_ids = [int(g) for g in segments["group_id"]]
-
-    train_groups, val_groups = split_group_ids(cfg, group_ids)
-    train_idx = _indices_for_groups(group_ids, train_groups)
-    val_idx = _indices_for_groups(group_ids, val_groups)
-
-    if not train_idx or not val_idx:
-        raise RuntimeError(
-            f"Empty train or val split (train={len(train_idx)}, val={len(val_idx)})."
-        )
-
-    return (
-        OnlineSegmentDataset(cfg, segments, train_idx),
-        OnlineSegmentDataset(cfg, segments, val_idx),
-    )
-
-
 def build_dataloaders(cfg: ExperimentConfig) -> tuple[DataLoader, DataLoader]:
-    """Return `(train_loader, val_loader)` for the configured augment mode."""
-    if cfg.augment_mode == "online":
-        train_ds, val_ds = build_online_datasets(cfg)
-        collate_fn = collate_online
-    else:
-        train_ds, val_ds = build_cached_datasets(cfg)
-        collate_fn = collate_cached
-
+    """Return `(train_loader, val_loader)` for the offline cached features."""
+    train_ds, val_ds = build_cached_datasets(cfg)
     return (
-        _make_loader(train_ds, shuffle=True, collate_fn=collate_fn, cfg=cfg),
-        _make_loader(val_ds, shuffle=False, collate_fn=collate_fn, cfg=cfg),
+        _make_loader(train_ds, shuffle=True, collate_fn=collate_cached, cfg=cfg),
+        _make_loader(val_ds, shuffle=False, collate_fn=collate_cached, cfg=cfg),
     )
 
-
-def set_epoch(loader: DataLoader, epoch: int) -> None:
-    """Propagate epoch to `OnlineSegmentDataset` (no-op for cached loaders)."""
-    ds = loader.dataset
-    if isinstance(ds, OnlineSegmentDataset):
-        ds.set_epoch(epoch)

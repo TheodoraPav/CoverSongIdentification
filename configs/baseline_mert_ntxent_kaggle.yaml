@@ -17,13 +17,13 @@ projection:
   dropout: 0.1
 
 augment: none
-augment_mode: offline
 sampling: random
 loss: ntxent
 pool: mean
 segments_per_track: 5
 segment_seconds: 5.0
 seed: 42
+eval_level: track_dtw
 
 training:
   batch_size: 32

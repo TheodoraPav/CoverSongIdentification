@@ -19,10 +19,10 @@ from tqdm import tqdm
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.dataset import build_dataloaders, set_epoch  # noqa: E402
+from src.dataset import build_dataloaders  # noqa: E402
 from src.evaluate import evaluate_loader, save_metrics  # noqa: E402
 from src.extract_features import pooled_features_from_batch  # noqa: E402
-from src.model import build_projection_head, load_backbone  # noqa: E402
+from src.model import build_projection_head  # noqa: E402
 from src.utils import (  # noqa: E402
     ExperimentConfig,
     checkpoint_path_for,
@@ -140,20 +140,14 @@ def train_one_epoch(
         optimizer: torch.optim.Optimizer,
         device: torch.device,
         epoch: int,
-        backbone: nn.Module | None = None,
-        processor: object | None = None,
-        backbone_spec=None,
 ) -> float:
     head.train()
-    if backbone is not None:
-        backbone.eval()
-
     total_loss = 0.0
     n_batches = 0
 
     for batch in tqdm(loader, desc=f"train epoch {epoch}", leave=False):
         pooled = pooled_features_from_batch(
-            batch, cfg, device, backbone, processor, backbone_spec, epoch,
+            batch, device,
         )
         z = head(pooled)
         loss = compute_loss(z, batch, cfg)
@@ -193,15 +187,6 @@ def run_training(cfg: ExperimentConfig) -> dict:
         weight_decay=cfg.training.weight_decay,
     )
 
-    backbone = None
-    processor = None
-    backbone_spec = None
-    if cfg.augment_mode == "online":
-        LOGGER.info("Online mode: loading frozen backbone %s", cfg.backbone)
-        backbone, processor, backbone_spec = load_backbone(
-            cfg.backbone, cfg.backbone_checkpoint, device=device,
-        )
-
     ckpt_path = checkpoint_path_for(cfg)
     best_mrr = -1.0
     best_metrics: dict | None = None
@@ -209,12 +194,9 @@ def run_training(cfg: ExperimentConfig) -> dict:
     history: list[dict] = []
 
     for epoch in range(1, cfg.training.epochs + 1):
-        set_epoch(train_loader, epoch)
-        set_epoch(val_loader, epoch)
 
         train_loss = train_one_epoch(
             cfg, head, train_loader, optimizer, device, epoch,
-            backbone, processor, backbone_spec,
         )
         LOGGER.info("Epoch %d | train_loss=%.4f", epoch, train_loss)
 
@@ -229,11 +211,11 @@ def run_training(cfg: ExperimentConfig) -> dict:
         if epoch % cfg.training.val_every == 0:
             metrics = evaluate_loader(
                 cfg, head, val_loader, device,
-                backbone, processor, backbone_spec, epoch=epoch,
+                None, None, None, epoch=epoch,
             )
             LOGGER.info(
-                "Epoch %d | MRR=%.4f Top-5=%.4f Silhouette=%s",
-                epoch, metrics["mrr"], metrics["top5"], metrics["silhouette"],
+                "Epoch %d | MRR=%.4f Top-1=%.4f Top-5=%.4f Silhouette=%s",
+                epoch, metrics["mrr"], metrics["top1"], metrics["top5"], metrics["silhouette"],
             )
 
             epoch_metrics["val_mrr"] = metrics["mrr"]
@@ -253,7 +235,7 @@ def run_training(cfg: ExperimentConfig) -> dict:
         save_checkpoint(head, ckpt_path, epoch=cfg.training.epochs)
         best_metrics = evaluate_loader(
             cfg, head, val_loader, device,
-            backbone, processor, backbone_spec, epoch=cfg.training.epochs,
+            None, None, None, epoch=cfg.training.epochs,
         )
         best_epoch = cfg.training.epochs
 
@@ -266,7 +248,7 @@ def run_training(cfg: ExperimentConfig) -> dict:
 def main() -> None:
     cfg = parse_config_arg("Train projection head for cover song identification")
     metrics = run_training(cfg)
-    LOGGER.info("Done. Best MRR=%.4f Top-5=%.4f", metrics["mrr"], metrics["top5"])
+    LOGGER.info("Done. Best MRR=%.4f Top-1=%.4f Top-5=%.4f", metrics["mrr"], metrics["top1"], metrics["top5"])
 
 
 if __name__ == "__main__":

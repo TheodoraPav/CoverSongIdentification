@@ -2,11 +2,10 @@
 
 Design notes:
 
-*   Every backbone is loaded once (eval mode, all parameters frozen) and is
-    shared between `extract_features.py` and any future
-    `augment_mode: online` run.
-*   `last_hidden_state` is the single source of truth across families
-    (MERT / HuBERT / AST). Pooling collapses the time axis into one vector.
+*   Every backbone is loaded once (eval mode, all parameters frozen) during
+    `extract_features.py` caching.
+*   `last_hidden_state` is the single source of truth across MERT families.
+    Pooling collapses the time axis into one vector.
 *   Length correction (`augmentations.length_fix`) keeps every segment at the
     same number of samples per batch, so an attention mask is usually not
     needed. The pooling helper still supports a mask for variable-length
@@ -56,20 +55,6 @@ BACKBONE_REGISTRY: dict[str, BackboneSpec] = {
         hidden_dim=1024,
         input_type="waveform",
         trust_remote_code=True,
-    ),
-    "hubert": BackboneSpec(
-        name="hubert",
-        checkpoint="facebook/hubert-base-ls960",
-        sample_rate=16000,
-        hidden_dim=768,
-        input_type="waveform",
-    ),
-    "ast": BackboneSpec(
-        name="ast",
-        checkpoint="MIT/ast-finetuned-audioset-10-10-0.4593",
-        sample_rate=16000,
-        hidden_dim=768,
-        input_type="mel",
     ),
 }
 
@@ -178,9 +163,9 @@ def _frame_level_mask(
 ) -> torch.Tensor | None:
     """Map a sample level attention_mask to frame level (B, T).
 
-    HuBERT / Wav2Vec2 / MERT expose `_get_feature_vector_attention_mask`
+    MERT exposes `_get_feature_vector_attention_mask`
     which accounts for the convolutional downsampling. If that helper is
-    missing (e.g. AST), or if the mask already matches `n_frames`, we just
+    missing, or if the mask already matches `n_frames`, we just
     return what we have.
     """
     if sample_mask is None:
