@@ -289,8 +289,8 @@ def features_file_for(cfg: ExperimentConfig) -> Path:
 
 
 def experiment_id_for(cfg: ExperimentConfig) -> str:
-    """Return the unique experiment name."""
-    return cfg.experiment_name
+    """Generate a unique experiment ID combining the experiment name with augment, sampling, and seed."""
+    return f"{cfg.experiment_name}_{cfg.augment}_{cfg.sampling}_seed{cfg.seed}"
 
 
 def checkpoint_path_for(cfg: ExperimentConfig) -> Path:
@@ -377,11 +377,9 @@ def resolve_audio_path(cfg: ExperimentConfig, value: str) -> Path:
 def save_history(history: list[dict], path: Path) -> None:
     logger = logging.getLogger("utils")
     path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(history[0].keys()) if history else []
     with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["epoch", "train_loss", "val_mrr", "val_top5", "val_silhouette"],
-        )
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(history)
     logger.info("Wrote training history to %s", path)
