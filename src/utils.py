@@ -280,8 +280,8 @@ def segments_file_for(cfg: ExperimentConfig) -> Path:
 
 
 def cache_path_for(cfg: ExperimentConfig) -> Path:
-    """`{cache_dir}/{backbone}/{augment}/{sampling}/`."""
-    return Path(cfg.paths.cache_dir) / cfg.backbone / cfg.augment / cfg.sampling
+    """`{cache_dir}/{backbone}/{pool}/{augment}/{sampling}/`."""
+    return Path(cfg.paths.cache_dir) / cfg.backbone / cfg.pool / cfg.augment / cfg.sampling
 
 
 def features_file_for(cfg: ExperimentConfig) -> Path:
@@ -289,8 +289,8 @@ def features_file_for(cfg: ExperimentConfig) -> Path:
 
 
 def experiment_id_for(cfg: ExperimentConfig) -> str:
-    """Generate a unique experiment ID combining the experiment name with augment, sampling, and seed."""
-    return f"{cfg.experiment_name}_{cfg.augment}_{cfg.sampling}_seed{cfg.seed}"
+    """Generate a unique experiment ID combining all configuration parameters: model, loss, augment, sampling, seed, pool, and eval_level."""
+    return f"{cfg.backbone}_{cfg.loss}_{cfg.augment}_{cfg.sampling}_seed{cfg.seed}_{cfg.pool}_{cfg.eval_level}"
 
 
 def checkpoint_path_for(cfg: ExperimentConfig) -> Path:
