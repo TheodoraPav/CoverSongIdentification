@@ -7,7 +7,7 @@ sample_rate: 24000
 projection:
   hidden_dim: 512
   output_dim: 128
-  dropout: 0.1
+  dropout: 0.3
 
 augment: none
 sampling: random
@@ -21,10 +21,11 @@ eval_level: track_dtw
 training:
   batch_size: 64
   epochs: 50
-  lr: 0.001
+  lr: 0.0001
   weight_decay: 0.0001
   val_every: 1
   val_fraction: 0.2
+  early_stopping_patience: 12
   triplet_margin: 0.3
   ntxent_temperature: 0.1
   num_workers: 2

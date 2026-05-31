@@ -188,6 +188,41 @@
         }
       ],
       "winner_key": "BEST_EVAL_LEVEL"
+    },
+    {
+      "id": "phase6_dynamic_segments",
+      "title": "Dynamic segment pool (Phase 6)",
+      "description": "After full winner lock (stratified sampling only): fixed 5 segments vs dynamic 5 per epoch from a duration-capped stratified pool.",
+      "experiments": [
+        {
+          "name": "p6_fixed_5",
+          "description": "Stratified baseline: fixed 5 segments per track.",
+          "uses_winner": "BEST_BACKBONE",
+          "uses_winner_pool": "BEST_POOL",
+          "uses_winner_loss": "BEST_LOSS",
+          "uses_winner_augment": "BEST_AUGMENT",
+          "overrides": {
+            "sampling": "stratified",
+            "segment_pool_mode": "fixed",
+            "segments_per_track": 5
+          }
+        },
+        {
+          "name": "p6_dynamic_5",
+          "description": "Stratified duration pool (capped); sample 5 paired zones per epoch for train, fixed 5 for eval.",
+          "uses_winner": "BEST_BACKBONE",
+          "uses_winner_pool": "BEST_POOL",
+          "uses_winner_loss": "BEST_LOSS",
+          "uses_winner_augment": "BEST_AUGMENT",
+          "overrides": {
+            "sampling": "stratified",
+            "segment_pool_mode": "dynamic",
+            "segments_per_track": 5,
+            "segment_pool_max": 20
+          }
+        }
+      ],
+      "winner_key": "BEST_SEGMENT_POOL"
     }
   ]
 }
