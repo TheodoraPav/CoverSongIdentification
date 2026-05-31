@@ -335,6 +335,9 @@ def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
         "augment": augment_flag,
         "sampling": cfg.sampling,
         "pool": cfg.pool,
+        "segment_pool_mode": cfg.segment_pool_mode,
+        "segment_pool_max": cfg.segment_pool_max,
+        "segments_per_track": cfg.segments_per_track,
         "experiment_name": cfg.experiment_name,
     }
 

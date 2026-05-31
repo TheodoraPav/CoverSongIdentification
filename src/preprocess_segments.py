@@ -34,6 +34,7 @@ from src.utils import (  # noqa: E402
     ExperimentConfig,
     get_logger,
     parse_config_arg,
+    pool_size_for_duration,
     resolve_audio_path,
     segments_file_for,
     set_global_seed,
@@ -203,7 +204,6 @@ def build_segments(cfg: ExperimentConfig) -> pd.DataFrame:
     rng = np.random.default_rng(cfg.seed)
 
     manifest = _load_manifest(cfg)
-    n = cfg.segments_per_track
     seg_len = float(cfg.segment_seconds)
     rows: list[dict] = []
 
@@ -212,13 +212,20 @@ def build_segments(cfg: ExperimentConfig) -> pd.DataFrame:
         manifest_audio = str(track["audio_path"]).replace("\\", "/")
         audio_path = resolve_audio_path(cfg, manifest_audio)
 
-        if cfg.sampling == "random":
+        if cfg.segment_pool_mode == "dynamic":
+            n = pool_size_for_duration(duration, seg_len, cfg.segment_pool_max)
+            segs = _sample_stratified(duration, n, seg_len, rng)
+        elif cfg.sampling == "random":
+            n = cfg.segments_per_track
             segs = _sample_random(duration, n, seg_len, rng)
         elif cfg.sampling == "stratified":
+            n = cfg.segments_per_track
             segs = _sample_stratified(duration, n, seg_len, rng)
         elif cfg.sampling == "mixed":
+            n = cfg.segments_per_track
             segs = _sample_mixed(duration, n, seg_len, rng)
         elif cfg.sampling == "beat":
+            n = cfg.segments_per_track
             segs = _sample_beat(audio_path, duration, n, seg_len, rng)
         else:
             raise ValueError(f"unknown sampling: {cfg.sampling}")
@@ -243,13 +250,24 @@ def build_segments(cfg: ExperimentConfig) -> pd.DataFrame:
         raise RuntimeError("No segments produced. Check the manifest filter.")
 
     df = pd.DataFrame(rows)
-    LOGGER.info(
-        "Built %d segments (%d tracks x %d segs/track, sampling=%s).",
-        len(df),
-        df["track_id"].nunique(),
-        n,
-        cfg.sampling,
-    )
+    if cfg.segment_pool_mode == "dynamic":
+        avg_pool = df.groupby("track_id").size().mean()
+        LOGGER.info(
+            "Built %d pool segments (%d tracks, avg %.1f segs/track, "
+            "dynamic pool max=%d, sampling=stratified).",
+            len(df),
+            df["track_id"].nunique(),
+            avg_pool,
+            cfg.segment_pool_max,
+        )
+    else:
+        LOGGER.info(
+            "Built %d segments (%d tracks x %d segs/track, sampling=%s).",
+            len(df),
+            df["track_id"].nunique(),
+            cfg.segments_per_track,
+            cfg.sampling,
+        )
     return df
 
 

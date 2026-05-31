@@ -49,6 +49,7 @@ LOSSES = ("triplet", "triplet_hard", "ntxent")
 POOLS = ("mean", "max")
 BACKBONES = ("mert", "mert_large")
 EVAL_LEVELS = ("segment", "track_pool", "track_dtw")
+SEGMENT_POOL_MODES = ("fixed", "dynamic")
 
 
 # -----------------------------------------------------------------------------
@@ -61,7 +62,7 @@ class ProjectionConfig:
     input_dim: int | None = None  # auto-detected from backbone if None
     hidden_dim: int = 512
     output_dim: int = 128
-    dropout: float = 0.1
+    dropout: float = 0.3
 
 
 @dataclass
@@ -78,7 +79,7 @@ class PathsConfig:
 class TrainingConfig:
     batch_size: int = 64
     epochs: int = 50
-    lr: float = 1e-3
+    lr: float = 1e-4
     weight_decay: float = 1e-4
     warmup_epochs: int = 0
     val_every: int = 1
@@ -87,6 +88,7 @@ class TrainingConfig:
     ntxent_temperature: float = 0.1
     num_workers: int = 2
     pin_memory: bool = True
+    early_stopping_patience: int = 12
 
 
 @dataclass
@@ -105,6 +107,8 @@ class ExperimentConfig:
     pool: str = "mean"
     segments_per_track: int = 5
     segment_seconds: float = 5.0
+    segment_pool_mode: str = "fixed"
+    segment_pool_max: int = 20
     seed: int = 42
     eval_level: str = "segment"
     training: TrainingConfig = field(default_factory=TrainingConfig)
@@ -117,6 +121,7 @@ class ExperimentConfig:
             ("loss", self.loss, LOSSES),
             ("pool", self.pool, POOLS),
             ("eval_level", self.eval_level, EVAL_LEVELS),
+            ("segment_pool_mode", self.segment_pool_mode, SEGMENT_POOL_MODES),
         )
         for name, value, allowed in enum_fields:
             _ensure_in(name, value, allowed)
@@ -125,8 +130,12 @@ class ExperimentConfig:
             raise ValueError("segments_per_track must be >= 1")
         if self.segment_seconds <= 0:
             raise ValueError("segment_seconds must be > 0")
+        if self.segment_pool_mode == "dynamic" and self.segment_pool_max < 1:
+            raise ValueError("segment_pool_max must be >= 1 when segment_pool_mode='dynamic'")
         if not (0.0 < self.training.val_fraction < 1.0):
             raise ValueError("training.val_fraction must be in (0, 1)")
+        if self.training.early_stopping_patience < 0:
+            raise ValueError("training.early_stopping_patience must be >= 0")
 
 
 def _ensure_in(name: str, value: object, allowed: Iterable[str]) -> None:
@@ -170,6 +179,8 @@ def load_config(path: str | os.PathLike) -> ExperimentConfig:
         pool=raw.get("pool", "mean"),
         segments_per_track=raw.get("segments_per_track", 5),
         segment_seconds=raw.get("segment_seconds", 5.0),
+        segment_pool_mode=raw.get("segment_pool_mode", "fixed"),
+        segment_pool_max=raw.get("segment_pool_max", 20),
         seed=raw.get("seed", 42),
         eval_level=raw.get("eval_level", "segment"),
         training=training,
@@ -274,14 +285,28 @@ def get_logger(
 # -----------------------------------------------------------------------------
 
 
+def pool_size_for_duration(duration: float, seg_len: float, max_pool: int) -> int:
+    """Number of non-overlapping fixed-length segments a track can fit (capped)."""
+    if seg_len <= 0:
+        raise ValueError("seg_len must be > 0")
+    n = max(1, int(duration // seg_len))
+    return min(n, max_pool)
+
+
 def segments_file_for(cfg: ExperimentConfig) -> Path:
-    """`{segments_dir}/{sampling}/segments.csv` (one file per sampling strategy)."""
-    return Path(cfg.paths.segments_dir) / cfg.sampling / "segments.csv"
+    """Segments CSV path; dynamic mode stores the full capped pool separately."""
+    base = Path(cfg.paths.segments_dir) / cfg.sampling
+    if cfg.segment_pool_mode == "dynamic":
+        return base / f"pool_{cfg.segment_pool_max}" / "segments.csv"
+    return base / "segments.csv"
 
 
 def cache_path_for(cfg: ExperimentConfig) -> Path:
-    """`{cache_dir}/{backbone}/{pool}/{augment}/{sampling}/`."""
-    return Path(cfg.paths.cache_dir) / cfg.backbone / cfg.pool / cfg.augment / cfg.sampling
+    """Feature cache directory; dynamic pools use a dedicated subdirectory."""
+    base = Path(cfg.paths.cache_dir) / cfg.backbone / cfg.pool / cfg.augment / cfg.sampling
+    if cfg.segment_pool_mode == "dynamic":
+        return base / f"pool_{cfg.segment_pool_max}"
+    return base
 
 
 def features_file_for(cfg: ExperimentConfig) -> Path:
@@ -289,8 +314,14 @@ def features_file_for(cfg: ExperimentConfig) -> Path:
 
 
 def experiment_id_for(cfg: ExperimentConfig) -> str:
-    """Generate a unique experiment ID combining all configuration parameters: model, loss, augment, sampling, seed, pool, and eval_level."""
-    return f"{cfg.backbone}_{cfg.loss}_{cfg.augment}_{cfg.sampling}_seed{cfg.seed}_{cfg.pool}_{cfg.eval_level}"
+    """Generate a unique experiment ID combining all configuration parameters."""
+    base = (
+        f"{cfg.backbone}_{cfg.loss}_{cfg.augment}_{cfg.sampling}_seed{cfg.seed}_"
+        f"{cfg.pool}_{cfg.eval_level}"
+    )
+    if cfg.segment_pool_mode == "dynamic":
+        return f"{base}_dyn{cfg.segments_per_track}from{cfg.segment_pool_max}"
+    return base
 
 
 def checkpoint_path_for(cfg: ExperimentConfig) -> Path:

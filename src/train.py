@@ -19,7 +19,7 @@ from tqdm import tqdm
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.dataset import build_dataloaders  # noqa: E402
+from src.dataset import build_dataloaders, set_epoch  # noqa: E402
 from src.evaluate import evaluate_loader, save_metrics  # noqa: E402
 from src.extract_features import pooled_features_from_batch  # noqa: E402
 from src.model import build_projection_head  # noqa: E402
@@ -192,8 +192,11 @@ def run_training(cfg: ExperimentConfig) -> dict:
     best_metrics: dict | None = None
     best_epoch: int | None = None
     history: list[dict] = []
+    patience = cfg.training.early_stopping_patience
+    epochs_without_improvement = 0
 
     for epoch in range(1, cfg.training.epochs + 1):
+        set_epoch(train_loader, epoch)
 
         train_loss = train_one_epoch(
             cfg, head, train_loader, optimizer, device, epoch,
@@ -229,8 +232,19 @@ def run_training(cfg: ExperimentConfig) -> dict:
                 best_metrics = metrics
                 best_epoch = epoch
                 save_checkpoint(head, ckpt_path, epoch=epoch)
+                epochs_without_improvement = 0
+            elif patience > 0:
+                epochs_without_improvement += 1
 
         history.append(epoch_metrics)
+
+        if patience > 0 and epochs_without_improvement >= patience:
+            LOGGER.info(
+                "Early stopping at epoch %d (no val MRR improvement for %d epochs; "
+                "best epoch=%s, best MRR=%.4f)",
+                epoch, patience, best_epoch, best_mrr,
+            )
+            break
 
     if best_metrics is None:
         LOGGER.warning("No validation ran; saving final weights.")
