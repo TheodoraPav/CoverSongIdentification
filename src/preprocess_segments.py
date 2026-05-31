@@ -117,12 +117,12 @@ def _sample_stratified(
         return _sample_random(duration, n, seg_len, rng)
 
     zone_width = duration / n
-    jitter_range = zone_width - seg_len
+    jitter_range = max(0.0, zone_width - seg_len)
 
     segments = []
     for i in range(n):
         zone_start = i * zone_width
-        offset = rng.uniform(0.0, jitter_range)
+        offset = rng.uniform(0.0, jitter_range) if jitter_range > 0.0 else 0.0
         start = zone_start + offset
         segments.append((float(start), float(start + seg_len)))
     return segments
