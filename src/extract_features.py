@@ -15,6 +15,7 @@ This module also exposes helpers used by `train.py` and `evaluate.py`:
 from __future__ import annotations
 
 import argparse
+import gc
 import sys
 from pathlib import Path
 
@@ -318,6 +319,12 @@ def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
         augment_flag,
         cfg.sampling,
     )
+
+    # Free backbone from GPU before returning cached features
+    del model, processor
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return {
         "features": feature_tensor,
