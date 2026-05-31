@@ -69,6 +69,12 @@ def _load_manifest(cfg: ExperimentConfig) -> pd.DataFrame:
     df = df[df["downloaded"]].copy()
     LOGGER.info("Manifest: %d rows -> %d downloaded.", initial, len(df))
 
+    # Filter out invalid, NaN, or non-positive durations before checking too_short
+    invalid_dur = df["duration_sec"].isna() | (df["duration_sec"] <= 0.0)
+    if invalid_dur.any():
+        LOGGER.warning("Dropping %d tracks with invalid/NaN duration_sec.", int(invalid_dur.sum()))
+        df = df[~invalid_dur].copy()
+
     too_short = df["duration_sec"] < cfg.segment_seconds
     if too_short.any():
         LOGGER.warning(
