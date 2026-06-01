@@ -243,18 +243,20 @@ def plot_similarity_comparison(
     sim_raw = (sub_raw @ sub_raw.T).numpy()
     sim_z = (sub_z @ sub_z.T).numpy()
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 6))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
     # heatmap before projection
-    im1 = ax1.imshow(sim_raw, cmap="viridis", vmin=0.0, vmax=1.0)
+    im1 = ax1.imshow(sim_raw, cmap="viridis", vmin=sim_raw.min(), vmax=1.0)
     ax1.set_title("Before Projection (Raw Backbone Features)", fontsize=11, fontweight="bold", pad=10)
     ax1.set_xlabel("Song Segments (Grouped)")
     ax1.set_ylabel("Song Segments (Grouped)")
+    fig.colorbar(im1, ax=ax1, label="Raw Cosine Similarity", fraction=0.046, pad=0.04)
 
     # heatmap after projection
-    im2 = ax2.imshow(sim_z, cmap="viridis", vmin=0.0, vmax=1.0)
+    im2 = ax2.imshow(sim_z, cmap="viridis", vmin=sim_z.min(), vmax=1.0)
     ax2.set_title("After Projection (Trainable Metric Space)", fontsize=11, fontweight="bold", pad=10)
     ax2.set_xlabel("Song Segments (Grouped)")
+    fig.colorbar(im2, ax=ax2, label="Projected Cosine Similarity", fraction=0.046, pad=0.04)
 
     # draw white dotted lines to mark distinct song group boundaries
     boundaries = np.where(sub_gids[:-1] != sub_gids[1:])[0]
@@ -263,12 +265,8 @@ def plot_similarity_comparison(
             ax.axhline(b + 0.5, color="white", linewidth=0.8, linestyle=":")
             ax.axvline(b + 0.5, color="white", linewidth=0.8, linestyle=":")
 
-    # add shared colorbar
-    fig.subplots_adjust(right=0.86)
-    cbar_ax = fig.add_axes([0.89, 0.15, 0.025, 0.7])
-    fig.colorbar(im2, cax=cbar_ax, label="Cosine Similarity Value")
-
-    plt.suptitle("Embedding Cosine Similarity Matrix Comparison (Before vs. After)", fontsize=14, fontweight="bold", y=0.96)
+    plt.suptitle("Embedding Cosine Similarity Matrix Comparison (Before vs. After)", fontsize=14, fontweight="bold", y=0.98)
+    fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
