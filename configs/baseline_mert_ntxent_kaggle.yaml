@@ -20,7 +20,9 @@ augment: none
 sampling: random
 loss: ntxent
 pool: mean
-segments_per_track: 5
+segment_pool_mode: dynamic
+segments_per_track: 10
+segment_pool_max: 40
 segment_seconds: 5.0
 seed: 42
 eval_level: track_dtw
