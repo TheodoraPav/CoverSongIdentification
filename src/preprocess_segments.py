@@ -214,18 +214,16 @@ def build_segments(cfg: ExperimentConfig) -> pd.DataFrame:
 
         if cfg.segment_pool_mode == "dynamic":
             n = pool_size_for_duration(duration, seg_len, cfg.segment_pool_max)
-            segs = _sample_stratified(duration, n, seg_len, rng)
-        elif cfg.sampling == "random":
+        else:
             n = cfg.segments_per_track
+
+        if cfg.sampling == "random":
             segs = _sample_random(duration, n, seg_len, rng)
         elif cfg.sampling == "stratified":
-            n = cfg.segments_per_track
             segs = _sample_stratified(duration, n, seg_len, rng)
         elif cfg.sampling == "mixed":
-            n = cfg.segments_per_track
             segs = _sample_mixed(duration, n, seg_len, rng)
         elif cfg.sampling == "beat":
-            n = cfg.segments_per_track
             segs = _sample_beat(audio_path, duration, n, seg_len, rng)
         else:
             raise ValueError(f"unknown sampling: {cfg.sampling}")
@@ -254,11 +252,12 @@ def build_segments(cfg: ExperimentConfig) -> pd.DataFrame:
         avg_pool = df.groupby("track_id").size().mean()
         LOGGER.info(
             "Built %d pool segments (%d tracks, avg %.1f segs/track, "
-            "dynamic pool max=%d, sampling=stratified).",
+            "dynamic pool max=%d, sampling=%s).",
             len(df),
             df["track_id"].nunique(),
             avg_pool,
             cfg.segment_pool_max,
+            cfg.sampling,
         )
     else:
         LOGGER.info(
