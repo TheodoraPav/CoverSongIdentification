@@ -63,6 +63,7 @@ class ProjectionConfig:
     hidden_dim: int = 512
     output_dim: int = 128
     dropout: float = 0.3
+    batchnorm: bool = True
 
 
 @dataclass

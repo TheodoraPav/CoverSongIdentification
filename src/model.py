@@ -228,7 +228,7 @@ class ProjectionHead(nn.Module):
     """Trainable MLP projection head.
 
     Architecture:
-        Linear(D_in, hidden_dim) -> ReLU -> Dropout(p) -> Linear(hidden_dim, output_dim)
+        Linear(D_in, hidden_dim) -> (BatchNorm1d) -> ReLU -> Dropout(p) -> Linear(hidden_dim, output_dim)
         -> L2 normalize.
 
     The output sits on the unit sphere so that cosine similarity equals dot
@@ -241,6 +241,7 @@ class ProjectionHead(nn.Module):
             hidden_dim: int = 512,
             output_dim: int = 128,
             dropout: float = 0.1,
+            use_batchnorm: bool = True,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
@@ -249,12 +250,15 @@ class ProjectionHead(nn.Module):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
 
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+        layers = [nn.Linear(input_dim, hidden_dim)]
+        if use_batchnorm:
+            layers.append(nn.BatchNorm1d(hidden_dim))
+        layers.extend([
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, output_dim),
-        )
+        ])
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         z = self.net(x)
@@ -276,4 +280,5 @@ def build_projection_head(cfg) -> ProjectionHead:
         hidden_dim=cfg.projection.hidden_dim,
         output_dim=cfg.projection.output_dim,
         dropout=cfg.projection.dropout,
+        use_batchnorm=getattr(cfg.projection, "batchnorm", True),
     )
