@@ -89,6 +89,12 @@ class TrainingConfig:
     num_workers: int = 2
     pin_memory: bool = True
     early_stopping_patience: int = 12
+    # Train batches with paired original/cover segments per group_id.
+    # Default off so baseline YAMLs match earlier random-shuffle runs.
+    use_group_batch_sampler: bool = False
+    groups_per_batch: int | None = None
+    segments_per_role_per_batch: int | None = None
+    group_sampler_drop_last: bool = True
 
 
 @dataclass
@@ -136,11 +142,62 @@ class ExperimentConfig:
             raise ValueError("training.val_fraction must be in (0, 1)")
         if self.training.early_stopping_patience < 0:
             raise ValueError("training.early_stopping_patience must be >= 0")
+        if self.training.use_group_batch_sampler:
+            resolve_group_sampler_params(self)
 
 
 def _ensure_in(name: str, value: object, allowed: Iterable[str]) -> None:
     if value not in allowed:
         raise ValueError(f"Invalid {name}={value!r}. Allowed: {sorted(allowed)}")
+
+
+def resolve_group_sampler_params(cfg: ExperimentConfig) -> tuple[int, int]:
+    """Resolve (groups_per_batch, segments_per_role_per_batch) for group batching.
+
+    Requires ``batch_size == 2 * groups_per_batch * segments_per_role_per_batch``.
+    """
+    t = cfg.training
+    bs = t.batch_size
+    gpb = t.groups_per_batch
+    spr = t.segments_per_role_per_batch
+
+    if gpb is None and spr is None:
+        # Largest segments/role (<= segments_per_track) that fills batch_size exactly.
+        spr_cap = min(cfg.segments_per_track, bs // 2)
+        gpb, spr = 1, 1
+        for spr_candidate in range(spr_cap, 0, -1):
+            if bs % (2 * spr_candidate) == 0:
+                spr = spr_candidate
+                gpb = bs // (2 * spr_candidate)
+                break
+    elif gpb is None:
+        if spr < 1:
+            raise ValueError("training.segments_per_role_per_batch must be >= 1")
+        gpb = bs // (2 * spr)
+    elif spr is None:
+        if gpb < 1:
+            raise ValueError("training.groups_per_batch must be >= 1")
+        spr = bs // (2 * gpb)
+    else:
+        if gpb < 1 or spr < 1:
+            raise ValueError(
+                "training.groups_per_batch and segments_per_role_per_batch must be >= 1"
+            )
+
+    if gpb < 1 or spr < 1:
+        raise ValueError(
+            f"Could not derive valid group sampler params from batch_size={bs}. "
+            "Set training.groups_per_batch and/or training.segments_per_role_per_batch."
+        )
+
+    expected = 2 * gpb * spr
+    if expected != bs:
+        raise ValueError(
+            f"training.batch_size={bs} must equal "
+            f"2 * groups_per_batch * segments_per_role_per_batch "
+            f"(2 * {gpb} * {spr} = {expected}) when use_group_batch_sampler=True"
+        )
+    return gpb, spr
 
 
 # -----------------------------------------------------------------------------

@@ -13,6 +13,7 @@ Loads pooled vectors from `features.pt` produced by `extract_features.py`.
 Public API:
     split_group_ids(cfg, all_group_ids) -> (train_groups, val_groups)
     CachedFeatureDataset
+    GroupPairBatchSampler
     build_dataloaders(cfg) -> (train_loader, val_loader)
     set_epoch(loader, epoch)
 """
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import BatchSampler, DataLoader, Dataset
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -34,6 +35,7 @@ from src.utils import (  # noqa: E402
     ExperimentConfig,
     features_file_for,
     get_logger,
+    resolve_group_sampler_params,
 )
 
 LOGGER = get_logger("dataset")
@@ -291,6 +293,167 @@ class CachedFeatureDataset(Dataset):
 
 
 # -----------------------------------------------------------------------------
+# Group-aware train batching
+# -----------------------------------------------------------------------------
+
+
+def _build_group_pair_index(
+    dataset: CachedFeatureDataset,
+) -> dict[int, dict[str, list[int]]]:
+    """Map group_id -> role -> dataset positions for the active index set."""
+    groups: dict[int, dict[str, list[int]]] = defaultdict(lambda: defaultdict(list))
+    for pos, cache_idx in enumerate(dataset.active_indices):
+        gid = int(dataset.group_ids[cache_idx])
+        role = str(dataset.roles[cache_idx]).lower()
+        if role in ("original", "cover"):
+            groups[gid][role].append(pos)
+
+    complete: dict[int, dict[str, list[int]]] = {}
+    for gid, roles in groups.items():
+        orig = roles.get("original", [])
+        cover = roles.get("cover", [])
+        if orig and cover:
+            complete[gid] = {"original": orig, "cover": cover}
+    return complete
+
+
+def _build_group_slots(
+    groups: dict[int, dict[str, list[int]]],
+    segments_per_role: int,
+    segments_per_track: int,
+    rng: np.random.Generator,
+) -> list[tuple[int, list[int], list[int]]]:
+    """Chunk each group's active segments into paired original/cover slots."""
+    slots: list[tuple[int, list[int], list[int]]] = []
+    for gid in sorted(groups):
+        orig = list(groups[gid]["original"])
+        cover = list(groups[gid]["cover"])
+        rng.shuffle(orig)
+        rng.shuffle(cover)
+        n = min(len(orig), len(cover), segments_per_track)
+        for start in range(0, n, segments_per_role):
+            o_chunk = orig[start : start + segments_per_role]
+            c_chunk = cover[start : start + segments_per_role]
+            if len(o_chunk) != len(c_chunk) or not o_chunk:
+                continue
+            slots.append((gid, o_chunk, c_chunk))
+    rng.shuffle(slots)
+    return slots
+
+
+def _count_group_slots(
+    groups: dict[int, dict[str, list[int]]],
+    segments_per_role: int,
+    segments_per_track: int,
+) -> int:
+    total = 0
+    for roles in groups.values():
+        n = min(len(roles["original"]), len(roles["cover"]), segments_per_track)
+        if n > 0:
+            total += (n + segments_per_role - 1) // segments_per_role
+    return total
+
+
+def iter_group_pair_batches(
+    dataset: CachedFeatureDataset,
+    *,
+    groups_per_batch: int,
+    segments_per_role: int,
+    epoch: int,
+    drop_last: bool = True,
+) -> list[list[int]]:
+    """Build one epoch of group-paired batches (for tests and the sampler).
+
+    Every active segment (up to ``segments_per_track`` per role) appears once per
+    epoch. Full batches contain ``groups_per_batch`` groups with
+    ``segments_per_role`` segments per role; the final chunk for a group may be
+    smaller when ``segments_per_track`` is not divisible by ``segments_per_role``.
+    """
+    groups = _build_group_pair_index(dataset)
+    if not groups:
+        return []
+
+    rng = np.random.default_rng(dataset.cfg.seed + int(epoch) * 1_000_003)
+    slots = _build_group_slots(
+        groups,
+        segments_per_role,
+        dataset.cfg.segments_per_track,
+        rng,
+    )
+
+    batches: list[list[int]] = []
+    for start in range(0, len(slots), groups_per_batch):
+        batch_slots = slots[start : start + groups_per_batch]
+        if len(batch_slots) < groups_per_batch and drop_last:
+            continue
+
+        batch_indices: list[int] = []
+        for _gid, o_chunk, c_chunk in batch_slots:
+            batch_indices.extend(o_chunk)
+            batch_indices.extend(c_chunk)
+
+        if batch_indices:
+            batches.append(batch_indices)
+
+    return batches
+
+
+class GroupPairBatchSampler(BatchSampler):
+    """Batch sampler with paired original/cover segments per group_id.
+
+    Each batch contains ``groups_per_batch`` song groups. For every group,
+    ``segments_per_role`` segments are drawn from the original track and the
+    same number from the cover track, so triplet / contrastive losses always
+    see valid positives inside the batch.
+    """
+
+    def __init__(
+        self,
+        dataset: CachedFeatureDataset,
+        *,
+        groups_per_batch: int,
+        segments_per_role: int,
+        drop_last: bool = True,
+    ) -> None:
+        if groups_per_batch < 1 or segments_per_role < 1:
+            raise ValueError(
+                "groups_per_batch and segments_per_role must be >= 1, "
+                f"got {groups_per_batch} and {segments_per_role}"
+            )
+        self.dataset = dataset
+        self.groups_per_batch = int(groups_per_batch)
+        self.segments_per_role = int(segments_per_role)
+        self.drop_last = bool(drop_last)
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+    def __iter__(self):
+        for batch in iter_group_pair_batches(
+            self.dataset,
+            groups_per_batch=self.groups_per_batch,
+            segments_per_role=self.segments_per_role,
+            epoch=self.epoch,
+            drop_last=self.drop_last,
+        ):
+            yield batch
+
+    def __len__(self) -> int:
+        groups = _build_group_pair_index(self.dataset)
+        n_slots = _count_group_slots(
+            groups,
+            self.segments_per_role,
+            self.dataset.cfg.segments_per_track,
+        )
+        if n_slots == 0:
+            return 0
+        if self.drop_last:
+            return n_slots // self.groups_per_batch
+        return (n_slots + self.groups_per_batch - 1) // self.groups_per_batch
+
+
+# -----------------------------------------------------------------------------
 # Collate
 # -----------------------------------------------------------------------------
 
@@ -315,14 +478,52 @@ def _make_loader(
     shuffle: bool,
     collate_fn,
     cfg: ExperimentConfig,
+    *,
+    batch_sampler: BatchSampler | None = None,
 ) -> DataLoader:
+    pin = cfg.training.pin_memory and torch.cuda.is_available()
+    common = dict(
+        collate_fn=collate_fn,
+        num_workers=cfg.training.num_workers,
+        pin_memory=pin,
+    )
+    if batch_sampler is not None:
+        return DataLoader(dataset, batch_sampler=batch_sampler, **common)
     return DataLoader(
         dataset,
         shuffle=shuffle,
-        collate_fn=collate_fn,
         batch_size=cfg.training.batch_size,
-        num_workers=cfg.training.num_workers,
-        pin_memory=cfg.training.pin_memory and torch.cuda.is_available(),
+        **common,
+    )
+
+
+def _make_train_loader(
+    train_ds: CachedFeatureDataset,
+    cfg: ExperimentConfig,
+) -> DataLoader:
+    if not cfg.training.use_group_batch_sampler:
+        return _make_loader(train_ds, shuffle=True, collate_fn=collate_cached, cfg=cfg)
+
+    gpb, spr = resolve_group_sampler_params(cfg)
+    sampler = GroupPairBatchSampler(
+        train_ds,
+        groups_per_batch=gpb,
+        segments_per_role=spr,
+        drop_last=cfg.training.group_sampler_drop_last,
+    )
+    LOGGER.info(
+        "Group batch sampler enabled: %d groups/batch, %d segments/role/group "
+        "(effective batch_size=%d)",
+        gpb,
+        spr,
+        cfg.training.batch_size,
+    )
+    return _make_loader(
+        train_ds,
+        shuffle=False,
+        collate_fn=collate_cached,
+        cfg=cfg,
+        batch_sampler=sampler,
     )
 
 
@@ -375,13 +576,17 @@ def build_dataloaders(cfg: ExperimentConfig) -> tuple[DataLoader, DataLoader]:
     """Return `(train_loader, val_loader)` for the offline cached features."""
     train_ds, val_ds = build_cached_datasets(cfg)
     return (
-        _make_loader(train_ds, shuffle=True, collate_fn=collate_cached, cfg=cfg),
+        _make_train_loader(train_ds, cfg),
         _make_loader(val_ds, shuffle=False, collate_fn=collate_cached, cfg=cfg),
     )
 
 
 def set_epoch(loader: DataLoader, epoch: int) -> None:
-    """Propagate epoch to dynamic train datasets (no-op for fixed/val loaders)."""
+    """Propagate epoch to dynamic train datasets and group batch samplers."""
     ds = loader.dataset
     if isinstance(ds, CachedFeatureDataset):
         ds.set_epoch(epoch)
+
+    batch_sampler = getattr(loader, "batch_sampler", None)
+    if batch_sampler is not None and hasattr(batch_sampler, "set_epoch"):
+        batch_sampler.set_epoch(epoch)
