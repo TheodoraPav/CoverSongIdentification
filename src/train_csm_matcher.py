@@ -1,8 +1,5 @@
 """Train the modular CSM + 2D CNN matcher (stage 2, after projection head).
 
-Loads a frozen projection-head checkpoint, trains the CSM CNN on train-split
-track pairs, evaluates on the val split, and writes CSM metrics.
-
 Usage:
     python src/train_csm_matcher.py --config configs/<experiment>.yaml
 """
@@ -21,6 +18,7 @@ if __package__ in (None, ""):
 from src.csm_matcher import (  # noqa: E402
     csm_metrics_dict,
     evaluate_track_csm,
+    evaluate_track_csm_diagonal,
     save_csm_matcher,
     save_csm_metrics,
     train_csm_matcher,
@@ -84,31 +82,28 @@ def run_csm_stage(cfg) -> dict:
         cfg, head, val_loader, device,
         epoch=int(best_epoch) if best_epoch is not None else 0,
     )
+
+    diag_metrics = evaluate_track_csm_diagonal(data)
     csm_metrics = evaluate_track_csm(data, matcher, device)
 
-    base_metrics_path = metrics_file_for(cfg)
-    if base_metrics_path.is_file():
-        import json
-        with base_metrics_path.open("r", encoding="utf-8") as f:
-            metrics = json.load(f)
-    else:
-        metrics = evaluate_loader(
-            cfg, head, val_loader, device,
-            None, None, None,
-            epoch=int(best_epoch) if best_epoch is not None else 0,
-        )
-        save_metrics(metrics, base_metrics_path)
-
-    metrics.update(csm_metrics_dict(csm_metrics))
+    metrics = evaluate_loader(
+        cfg, head, val_loader, device,
+        None, None, None,
+        epoch=int(best_epoch) if best_epoch is not None else 0,
+    )
+    metrics["experiment_name"] = cfg.experiment_name
+    metrics.update(csm_metrics_dict(diag_metrics, prefix="track_csm_diag"))
+    metrics.update(csm_metrics_dict(csm_metrics, prefix="track_csm"))
     metrics["csm_matcher_checkpoint"] = str(ckpt_path)
+
+    save_metrics(metrics, metrics_file_for(cfg))
     save_csm_metrics(metrics, csm_metrics_file_for(cfg))
 
     LOGGER.info(
-        "CSM val MRR=%.4f Top-1=%.4f Top-5=%.4f | DTW MRR=%.4f",
-        csm_metrics["mrr"],
-        csm_metrics["top1"],
-        csm_metrics["top5"],
+        "Val MRR | DTW=%.4f | CSM diagonal=%.4f | CSM+CNN=%.4f",
         metrics.get("track_dtw_mrr", float("nan")),
+        diag_metrics["mrr"],
+        csm_metrics["mrr"],
     )
     return metrics
 

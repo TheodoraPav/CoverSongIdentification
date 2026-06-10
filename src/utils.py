@@ -80,12 +80,17 @@ class MatcherConfig:
     """Stage-2 CSM + CNN matcher (trained after the projection head)."""
 
     enabled: bool = False
-    csm_size: int = 32
-    epochs: int = 20
+    csm_size: int = 10
+    csm_resize: bool = False
+    epochs: int = 30
     batch_size: int = 32
     lr: float = 1e-3
     weight_decay: float = 1e-4
     negatives_per_positive: int = 4
+    hard_negatives: bool = True
+    symmetric_pairs: bool = True
+    positive_class_weight: float | None = None
+    early_stopping_patience: int = 5
 
 
 @dataclass
@@ -164,6 +169,8 @@ class ExperimentConfig:
             raise ValueError("matcher.epochs must be >= 1")
         if self.matcher.negatives_per_positive < 1:
             raise ValueError("matcher.negatives_per_positive must be >= 1")
+        if self.matcher.early_stopping_patience < 0:
+            raise ValueError("matcher.early_stopping_patience must be >= 0")
 
 
 def _ensure_in(name: str, value: object, allowed: Iterable[str]) -> None:

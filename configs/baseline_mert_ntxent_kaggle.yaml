@@ -29,11 +29,15 @@ eval_level: track_dtw
 
 matcher:
   enabled: false
-  csm_size: 32
-  epochs: 20
+  csm_size: 10
+  csm_resize: false
+  epochs: 30
   batch_size: 32
   lr: 0.001
   negatives_per_positive: 4
+  hard_negatives: true
+  symmetric_pairs: true
+  early_stopping_patience: 5
 
 training:
   batch_size: 32
