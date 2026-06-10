@@ -31,6 +31,7 @@ if __package__ in (None, ""):
 
 from src.dataset import build_dataloaders  # noqa: E402
 from src.extract_features import pooled_features_from_batch  # noqa: E402
+from src.checkpointing import load_head_from_checkpoint  # noqa: E402
 from src.model import build_projection_head  # noqa: E402
 from src.utils import (  # noqa: E402
     ExperimentConfig,
@@ -329,16 +330,9 @@ def main() -> None:
     LOGGER.info("Building data loaders & loading model weights...")
     _, val_loader = build_dataloaders(cfg)
     
-    head = build_projection_head(cfg).to(device)
+    head = build_projection_head(cfg)
     payload = torch.load(ckpt_path, map_location=device, weights_only=False)
-    if isinstance(payload, dict) and "state_dict" in payload:
-        state = payload["state_dict"]
-    else:
-        # Backwards compatibility with older checkpoints (plain state_dict).
-        state = payload
-
-    head.load_state_dict(state)
-    head.eval()
+    load_head_from_checkpoint(head, payload, device)
 
     # collect embeddings before vs after
     embeddings = collect_embeddings_before_after(

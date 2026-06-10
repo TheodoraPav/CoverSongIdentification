@@ -25,6 +25,7 @@ from src.csm_matcher import (  # noqa: E402
 )
 from src.dataset import build_dataloaders  # noqa: E402
 from src.evaluate import collect_projected_embeddings, evaluate_loader, save_metrics  # noqa: E402
+from src.checkpointing import load_head_from_checkpoint  # noqa: E402
 from src.model import build_projection_head  # noqa: E402
 from src.utils import (  # noqa: E402
     checkpoint_path_for,
@@ -48,16 +49,9 @@ def _load_projection_head(cfg, device: torch.device) -> tuple[nn.Module, int | N
             f"Projection head checkpoint not found: {ckpt_path}. Run train.py first."
         )
 
-    head = build_projection_head(cfg).to(device)
+    head = build_projection_head(cfg)
     payload = torch.load(ckpt_path, map_location=device, weights_only=False)
-    if isinstance(payload, dict) and "state_dict" in payload:
-        head.load_state_dict(payload["state_dict"])
-        best_epoch = payload.get("best_epoch")
-    else:
-        head.load_state_dict(payload)
-        best_epoch = None
-
-    head.eval()
+    best_epoch = load_head_from_checkpoint(head, payload, device)
     for p in head.parameters():
         p.requires_grad = False
     return head, best_epoch

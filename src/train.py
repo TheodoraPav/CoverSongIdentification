@@ -6,23 +6,24 @@ Usage:
 
 from __future__ import annotations
 
-import random
 import sys
 from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.dataset import build_dataloaders, set_epoch  # noqa: E402
+from src.checkpointing import save_training_checkpoint  # noqa: E402
+from src.dataset import build_dataloaders, get_train_group_ids, set_epoch  # noqa: E402
 from src.evaluate import evaluate_loader, save_metrics  # noqa: E402
 from src.extract_features import pooled_features_from_batch  # noqa: E402
+from src.losses import ntxent_loss, proxy_anchor_loss, triplet_loss  # noqa: E402
 from src.model import build_projection_head  # noqa: E402
+from src.proxy_bank import ProxyBank  # noqa: E402
 from src.utils import (  # noqa: E402
     ExperimentConfig,
     checkpoint_path_for,
@@ -41,80 +42,13 @@ from src.utils import (  # noqa: E402
 LOGGER = get_logger("train")
 
 
-# -----------------------------------------------------------------------------
-# Losses
-# -----------------------------------------------------------------------------
-
-
-def ntxent_loss(
+def compute_loss(
         z: torch.Tensor,
-        group_ids: torch.Tensor,
-        temperature: float,
+        batch: dict,
+        cfg: ExperimentConfig,
+        *,
+        proxy_bank: ProxyBank | None = None,
 ) -> torch.Tensor:
-    """Multi-positive NT-Xent: positives are all same-group segments in the batch."""
-    z = F.normalize(z, p=2, dim=1)
-    b = z.size(0)
-    if b < 2:
-        return z.sum() * 0.0
-
-    sim = torch.mm(z, z.t()) / temperature
-    mask_self = torch.eye(b, device=z.device, dtype=torch.bool)
-    gid = group_ids.view(-1, 1)
-    same_group = (gid == gid.T) & ~mask_self
-
-    losses = []
-    for i in range(b):
-        pos = same_group[i]
-        if not pos.any():
-            continue
-        logits = sim[i].masked_fill(mask_self[i], float("-inf"))
-        denom = torch.logsumexp(logits, dim=0)
-        numer = torch.logsumexp(logits[pos], dim=0)
-        losses.append(-(numer - denom))
-
-    if not losses:
-        return z.sum() * 0.0
-    return torch.stack(losses).mean()
-
-
-def triplet_loss(
-        z: torch.Tensor,
-        group_ids: torch.Tensor,
-        roles: list[str],
-        margin: float,
-        hard: bool = False,
-) -> torch.Tensor:
-    """Anchor = original, positive = same-group cover, negative = other group."""
-    z = F.normalize(z, p=2, dim=1)
-    dist = 1.0 - torch.mm(z, z.t())
-    b = z.size(0)
-    gid = group_ids.cpu().tolist()
-    role = [str(r).lower() for r in roles]
-
-    losses = []
-    for i in range(b):
-        if role[i] != "original":
-            continue
-
-        pos_idx = [j for j in range(b) if gid[j] == gid[i] and role[j] == "cover"]
-        neg_idx = [j for j in range(b) if gid[j] != gid[i]]
-        if not pos_idx or not neg_idx:
-            continue
-
-        j_pos = random.choice(pos_idx)
-        if hard:
-            j_neg = min(neg_idx, key=lambda j: dist[i, j].item())
-        else:
-            j_neg = random.choice(neg_idx)
-
-        losses.append(F.relu(dist[i, j_pos] - dist[i, j_neg] + margin))
-
-    if not losses:
-        return z.sum() * 0.0
-    return torch.stack(losses).mean()
-
-
-def compute_loss(z: torch.Tensor, batch: dict, cfg: ExperimentConfig) -> torch.Tensor:
     group_ids = batch["group_id"].to(z.device)
     roles = batch["role"]
     t = cfg.training
@@ -125,12 +59,18 @@ def compute_loss(z: torch.Tensor, batch: dict, cfg: ExperimentConfig) -> torch.T
         return triplet_loss(z, group_ids, roles, t.triplet_margin, hard=False)
     if cfg.loss == "triplet_hard":
         return triplet_loss(z, group_ids, roles, t.triplet_margin, hard=True)
+    if cfg.loss == "proxy_anchor":
+        if proxy_bank is None:
+            raise ValueError("proxy_bank is required when loss='proxy_anchor'")
+        proxy_idx = proxy_bank.group_ids_to_indices(group_ids)
+        return proxy_anchor_loss(
+            z,
+            proxy_idx,
+            proxy_bank.all_proxies(),
+            alpha=t.proxy_alpha,
+            delta=t.proxy_delta,
+        )
     raise ValueError(f"Unknown loss: {cfg.loss!r}")
-
-
-# -----------------------------------------------------------------------------
-# Train loop
-# -----------------------------------------------------------------------------
 
 
 def train_one_epoch(
@@ -140,17 +80,20 @@ def train_one_epoch(
         optimizer: torch.optim.Optimizer,
         device: torch.device,
         epoch: int,
+        *,
+        proxy_bank: ProxyBank | None = None,
 ) -> float:
     head.train()
+    if proxy_bank is not None:
+        proxy_bank.train()
+
     total_loss = 0.0
     n_batches = 0
 
     for batch in tqdm(loader, desc=f"train epoch {epoch}", leave=False):
-        pooled = pooled_features_from_batch(
-            batch, device,
-        )
+        pooled = pooled_features_from_batch(batch, device)
         z = head(pooled)
-        loss = compute_loss(z, batch, cfg)
+        loss = compute_loss(z, batch, cfg, proxy_bank=proxy_bank)
 
         optimizer.zero_grad()
         loss.backward()
@@ -162,18 +105,7 @@ def train_one_epoch(
     return total_loss / n_batches if n_batches else 0.0
 
 
-def save_checkpoint(head: nn.Module, path: Path, *, epoch: int | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "state_dict": head.state_dict(),
-        "best_epoch": int(epoch) if epoch is not None else None,
-    }
-    torch.save(payload, path)
-    LOGGER.info("Saved checkpoint %s", path)
-
-
 def run_training(cfg: ExperimentConfig) -> dict:
-    # register the log file path dynamically to start logging to results/logs/
     get_logger("train", log_file=log_file_for(cfg))
 
     set_global_seed(cfg.seed)
@@ -181,8 +113,24 @@ def run_training(cfg: ExperimentConfig) -> dict:
 
     train_loader, val_loader = build_dataloaders(cfg)
     head = build_projection_head(cfg).to(device)
+
+    proxy_bank: ProxyBank | None = None
+    if cfg.loss == "proxy_anchor":
+        train_group_ids = get_train_group_ids(cfg)
+        proxy_bank = ProxyBank(train_group_ids, cfg.projection.output_dim).to(device)
+        LOGGER.info(
+            "Proxy-Anchor enabled with %d train proxies (alpha=%.2f, delta=%.2f)",
+            len(train_group_ids),
+            cfg.training.proxy_alpha,
+            cfg.training.proxy_delta,
+        )
+
+    params = list(head.parameters())
+    if proxy_bank is not None:
+        params += list(proxy_bank.parameters())
+
     optimizer = torch.optim.AdamW(
-        head.parameters(),
+        params,
         lr=cfg.training.lr,
         weight_decay=cfg.training.weight_decay,
     )
@@ -200,6 +148,7 @@ def run_training(cfg: ExperimentConfig) -> dict:
 
         train_loss = train_one_epoch(
             cfg, head, train_loader, optimizer, device, epoch,
+            proxy_bank=proxy_bank,
         )
         LOGGER.info("Epoch %d | train_loss=%.4f", epoch, train_loss)
 
@@ -225,13 +174,17 @@ def run_training(cfg: ExperimentConfig) -> dict:
             epoch_metrics["val_mrr"] = metrics["mrr"]
             epoch_metrics["val_top1"] = metrics["top1"]
             epoch_metrics["val_top5"] = metrics["top5"]
-            epoch_metrics["val_silhouette"] = metrics["silhouette"] if metrics["silhouette"] is not None else ""
+            epoch_metrics["val_silhouette"] = (
+                metrics["silhouette"] if metrics["silhouette"] is not None else ""
+            )
 
             if metrics["mrr"] > best_mrr:
                 best_mrr = metrics["mrr"]
                 best_metrics = metrics
                 best_epoch = epoch
-                save_checkpoint(head, ckpt_path, epoch=epoch)
+                save_training_checkpoint(
+                    ckpt_path, head, epoch=epoch, proxy_bank=proxy_bank,
+                )
                 epochs_without_improvement = 0
             elif patience > 0:
                 epochs_without_improvement += 1
@@ -248,7 +201,9 @@ def run_training(cfg: ExperimentConfig) -> dict:
 
     if best_metrics is None:
         LOGGER.warning("No validation ran; saving final weights.")
-        save_checkpoint(head, ckpt_path, epoch=cfg.training.epochs)
+        save_training_checkpoint(
+            ckpt_path, head, epoch=cfg.training.epochs, proxy_bank=proxy_bank,
+        )
         best_metrics = evaluate_loader(
             cfg, head, val_loader, device,
             None, None, None, epoch=cfg.training.epochs,

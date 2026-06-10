@@ -12,6 +12,7 @@ Loads pooled vectors from `features.pt` produced by `extract_features.py`.
 
 Public API:
     split_group_ids(cfg, all_group_ids) -> (train_groups, val_groups)
+    get_train_group_ids(cfg) -> list[int]
     CachedFeatureDataset
     GroupPairBatchSampler
     build_dataloaders(cfg) -> (train_loader, val_loader)
@@ -43,6 +44,14 @@ LOGGER = get_logger("dataset")
 # -----------------------------------------------------------------------------
 # Train / validation split (by group_id, no leakage)
 # -----------------------------------------------------------------------------
+
+
+def get_train_group_ids(cfg: ExperimentConfig) -> list[int]:
+    """Sorted train-split group_ids from the feature cache."""
+    payload = load_feature_cache(features_file_for(cfg))
+    group_ids = [int(g) for g in payload["group_id"]]
+    train_groups, _ = split_group_ids(cfg, group_ids)
+    return sorted(train_groups)
 
 
 def split_group_ids(

@@ -45,7 +45,7 @@ import yaml
 # Allowed config enum values.
 AUGMENTS = ("none", "time")
 SAMPLINGS = ("random", "stratified", "beat", "mixed")
-LOSSES = ("triplet", "triplet_hard", "ntxent")
+LOSSES = ("triplet", "triplet_hard", "ntxent", "proxy_anchor")
 POOLS = ("mean", "max")
 BACKBONES = ("mert", "mert_large")
 EVAL_LEVELS = ("segment", "track_pool", "track_dtw")
@@ -104,6 +104,8 @@ class TrainingConfig:
     val_fraction: float = 0.2
     triplet_margin: float = 0.3
     ntxent_temperature: float = 0.1
+    proxy_alpha: float = 32.0
+    proxy_delta: float = 0.1
     num_workers: int = 2
     pin_memory: bool = True
     early_stopping_patience: int = 12
