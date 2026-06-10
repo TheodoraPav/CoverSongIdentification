@@ -227,9 +227,18 @@ def pool_backbone_output(
 class ProjectionHead(nn.Module):
     """Trainable MLP projection head.
 
-    Architecture:
-        Linear(D_in, hidden_dim) -> (BatchNorm1d) -> ReLU -> Dropout(p) -> Linear(hidden_dim, output_dim)
-        -> L2 normalize.
+    Architecture (standard):
+        Linear(D_in, hidden_dim) → (BatchNorm1d) → ReLU → Dropout(p) → Linear(hidden_dim, output_dim)
+        → L2 normalize.
+
+    Architecture (with chroma bottleneck, chroma_dim > 0):
+        Linear(D_in, chroma_dim) → ReLU → Linear(chroma_dim, hidden_dim)
+        → (BatchNorm1d) → ReLU → Dropout(p) → Linear(hidden_dim, output_dim)
+        → L2 normalize.
+
+    The chroma bottleneck forces the representation through a narrow
+    pitch-class space (e.g. 24 = 2×12 semitones), stripping timbre
+    information and retaining only harmonic content.
 
     The output sits on the unit sphere so that cosine similarity equals dot
     product, which keeps the triplet and NT-Xent losses well behaved.
@@ -242,6 +251,7 @@ class ProjectionHead(nn.Module):
             output_dim: int = 128,
             dropout: float = 0.1,
             use_batchnorm: bool = True,
+            chroma_dim: int = 0,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
@@ -249,8 +259,19 @@ class ProjectionHead(nn.Module):
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
+        self.chroma_dim = chroma_dim
 
-        layers = [nn.Linear(input_dim, hidden_dim)]
+        layers: list[nn.Module] = []
+        if chroma_dim > 0:
+            # Chroma bottleneck: input_dim → chroma_dim → hidden_dim
+            layers.extend([
+                nn.Linear(input_dim, chroma_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(chroma_dim, hidden_dim),
+            ])
+        else:
+            layers.append(nn.Linear(input_dim, hidden_dim))
+
         if use_batchnorm:
             layers.append(nn.BatchNorm1d(hidden_dim))
         layers.extend([
@@ -281,4 +302,5 @@ def build_projection_head(cfg) -> ProjectionHead:
         output_dim=cfg.projection.output_dim,
         dropout=cfg.projection.dropout,
         use_batchnorm=getattr(cfg.projection, "batchnorm", True),
+        chroma_dim=getattr(cfg.projection, "chroma_dim", 0),
     )
