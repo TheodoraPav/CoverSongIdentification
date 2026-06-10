@@ -27,6 +27,14 @@ segment_seconds: 5.0
 seed: 42
 eval_level: track_dtw
 
+matcher:
+  enabled: false
+  csm_size: 32
+  epochs: 20
+  batch_size: 32
+  lr: 0.001
+  negatives_per_positive: 4
+
 training:
   batch_size: 32
   epochs: 50

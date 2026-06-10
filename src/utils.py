@@ -76,6 +76,19 @@ class PathsConfig:
 
 
 @dataclass
+class MatcherConfig:
+    """Stage-2 CSM + CNN matcher (trained after the projection head)."""
+
+    enabled: bool = False
+    csm_size: int = 32
+    epochs: int = 20
+    batch_size: int = 32
+    lr: float = 1e-3
+    weight_decay: float = 1e-4
+    negatives_per_positive: int = 4
+
+
+@dataclass
 class TrainingConfig:
     batch_size: int = 64
     epochs: int = 50
@@ -118,6 +131,7 @@ class ExperimentConfig:
     seed: int = 42
     eval_level: str = "segment"
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    matcher: MatcherConfig = field(default_factory=MatcherConfig)
 
     def validate(self) -> None:
         enum_fields = (
@@ -144,6 +158,12 @@ class ExperimentConfig:
             raise ValueError("training.early_stopping_patience must be >= 0")
         if self.training.use_group_batch_sampler:
             resolve_group_sampler_params(self)
+        if self.matcher.csm_size < 4:
+            raise ValueError("matcher.csm_size must be >= 4")
+        if self.matcher.epochs < 1:
+            raise ValueError("matcher.epochs must be >= 1")
+        if self.matcher.negatives_per_positive < 1:
+            raise ValueError("matcher.negatives_per_positive must be >= 1")
 
 
 def _ensure_in(name: str, value: object, allowed: Iterable[str]) -> None:
@@ -222,6 +242,7 @@ def load_config(path: str | os.PathLike) -> ExperimentConfig:
     paths = PathsConfig(**paths_raw)
     projection = ProjectionConfig(**(raw.get("projection") or {}))
     training = TrainingConfig(**(raw.get("training") or {}))
+    matcher = MatcherConfig(**(raw.get("matcher") or {}))
 
     cfg = ExperimentConfig(
         experiment_name=raw["experiment_name"],
@@ -241,6 +262,7 @@ def load_config(path: str | os.PathLike) -> ExperimentConfig:
         seed=raw.get("seed", 42),
         eval_level=raw.get("eval_level", "segment"),
         training=training,
+        matcher=matcher,
     )
     cfg.validate()
     return cfg
@@ -384,6 +406,19 @@ def experiment_id_for(cfg: ExperimentConfig) -> str:
 def checkpoint_path_for(cfg: ExperimentConfig) -> Path:
     """`checkpoints/{backbone}/{experiment_id}_best_head.pt`."""
     return Path(cfg.paths.checkpoints) / cfg.backbone / f"{experiment_id_for(cfg)}_best_head.pt"
+
+
+def csm_matcher_checkpoint_path_for(cfg: ExperimentConfig) -> Path:
+    """`checkpoints/{backbone}/{experiment_id}_csm_matcher.pt`."""
+    return (
+        Path(cfg.paths.checkpoints) / cfg.backbone
+        / f"{experiment_id_for(cfg)}_csm_matcher.pt"
+    )
+
+
+def csm_metrics_file_for(cfg: ExperimentConfig) -> Path:
+    """`results/metrics/{experiment_id}_csm.json`."""
+    return Path(cfg.paths.results_dir) / "metrics" / f"{experiment_id_for(cfg)}_csm.json"
 
 
 def metrics_file_for(cfg: ExperimentConfig) -> Path:

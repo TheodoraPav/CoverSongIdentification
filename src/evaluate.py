@@ -28,6 +28,7 @@ if __package__ in (None, ""):
 from src.dataset import build_dataloaders  # noqa: E402
 from src.extract_features import pooled_features_from_batch  # noqa: E402
 from src.model import build_projection_head  # noqa: E402
+from src.track_sequences import build_track_sequences  # noqa: E402
 from src.utils import (  # noqa: E402
     ExperimentConfig,
     checkpoint_path_for,
@@ -213,27 +214,8 @@ def evaluate_track_level(data: dict) -> tuple[dict, dict]:
     Returns:
         A tuple of dictionaries: (pool_metrics, dtw_metrics)
     """
-    z = data["z"].float().cpu().numpy()
-    # Normalize segment embeddings once for both Mean Pooling and Sequence DTW
-    z_norm = z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-9)
-    
-    group_ids = np.array(data["group_id"])
-    roles = np.array(data["role"])
-    track_ids = np.array(data["track_id"])
-    seg_ids = np.array(data["seg_id"])
-    
-    unique_tracks = np.unique(track_ids)
-    
-    track_sequences = {}
-    track_info = {}
-    
-    for tid in unique_tracks:
-        idx = np.where(track_ids == tid)[0]
-        # Sort by seg_id to maintain sequence order
-        sorted_idx = idx[np.argsort(seg_ids[idx])]
-        track_sequences[tid] = z_norm[sorted_idx]
-        track_info[tid] = (group_ids[idx[0]], roles[idx[0]])
-        
+    track_sequences, track_info = build_track_sequences(data)
+
     query_tids = [tid for tid, info in track_info.items() if info[1] == "cover"]
     gallery_tids = [tid for tid, info in track_info.items() if info[1] == "original"]
     
@@ -307,6 +289,37 @@ def evaluate_loader(
     LOGGER.info("Segment-Level (Baseline) : %.4f / %.4f / %.4f%s", mrr, top1, top5, seg_sel)
     LOGGER.info("Track-Level Mean Pooling : %.4f / %.4f / %.4f%s", track_pool_mrr, track_pool_top1, track_pool_top5, pool_sel)
     LOGGER.info("Track-Level Sequence DTW : %.4f / %.4f / %.4f%s", track_dtw_mrr, track_dtw_top1, track_dtw_top5, dtw_sel)
+
+    track_csm_mrr = None
+    track_csm_top1 = None
+    track_csm_top5 = None
+    if cfg.matcher.enabled:
+        from src.csm_matcher import (  # noqa: WPS433 - optional stage-2 matcher
+            csm_metrics_dict,
+            evaluate_track_csm,
+            load_csm_matcher,
+        )
+        from src.utils import csm_matcher_checkpoint_path_for  # noqa: WPS433
+
+        csm_ckpt = csm_matcher_checkpoint_path_for(cfg)
+        if csm_ckpt.is_file():
+            matcher = load_csm_matcher(cfg, device)
+            csm_metrics = evaluate_track_csm(data, matcher, device)
+            track_csm_mrr = csm_metrics["mrr"]
+            track_csm_top1 = csm_metrics["top1"]
+            track_csm_top5 = csm_metrics["top5"]
+            LOGGER.info(
+                "Track-Level CSM + CNN      : %.4f / %.4f / %.4f",
+                track_csm_mrr,
+                track_csm_top1,
+                track_csm_top5,
+            )
+        else:
+            LOGGER.info(
+                "Track-Level CSM + CNN      : skipped (no checkpoint at %s)",
+                csm_ckpt,
+            )
+
     LOGGER.info("=" * 75)
 
     # Map primary metrics based on configured eval_level
@@ -327,7 +340,7 @@ def evaluate_loader(
         primary_top1 = top1
         primary_top5 = top5
 
-    return {
+    metrics = {
         "experiment_name": cfg.experiment_name,
         "mrr": round(primary_mrr, 6),
         "top1": round(primary_top1, 6),
@@ -352,6 +365,15 @@ def evaluate_loader(
         "track_dtw_top1": round(track_dtw_top1, 6),
         "track_dtw_top5": round(track_dtw_top5, 6),
     }
+
+    if track_csm_mrr is not None:
+        metrics.update(csm_metrics_dict({
+            "mrr": track_csm_mrr,
+            "top1": track_csm_top1,
+            "top5": track_csm_top5,
+        }))
+
+    return metrics
 
 
 def save_metrics(metrics: dict, path: Path) -> None:
