@@ -149,11 +149,12 @@ def backbone_forward(
     inputs = {k: v.to(device) for k, v in inputs.items() if isinstance(v, torch.Tensor)}
 
     with torch.no_grad():
-        out = model(**inputs)
+        out = model(**inputs, output_hidden_states=True)
 
     hidden = out.last_hidden_state  # (B, T, D)
+    all_hidden = getattr(out, "hidden_states", None)  # tuple of 13 × (B, T, D) or None
     mask = _frame_level_mask(model, inputs.get("attention_mask"), hidden.shape[1])
-    return hidden, mask
+    return hidden, mask, all_hidden
 
 
 def _frame_level_mask(
@@ -219,9 +220,89 @@ def pool_backbone_output(
     return F.normalize(pooled, p=2, dim=-1)
 
 
+def pool_all_layers(
+        all_hidden_states: tuple[torch.Tensor, ...],
+        mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Pool each layer's ``(B, T, D)`` to ``(B, D)`` and stack to ``(B, N_layers, D)``.
+
+    Uses mean temporal pooling (same as the default ``pool_backbone_output``).
+    The result is **not** L2-normalized — normalization is left to the
+    projection head so that the layer-wise weighting operates on raw magnitudes.
+    """
+    pooled = []
+    for h in all_hidden_states:
+        if mask is not None:
+            m = mask.to(h.dtype).unsqueeze(-1)
+            p = (h * m).sum(dim=1) / m.sum(dim=1).clamp_min(1.0)
+        else:
+            p = h.mean(dim=1)
+        pooled.append(p)
+    return torch.stack(pooled, dim=1)  # (B, N_layers, D)
+
+
 # -----------------------------------------------------------------------------
 # Projection head
 # -----------------------------------------------------------------------------
+
+
+class LayerPooler(nn.Module):
+    """Combine multiple MERT hidden-state layers into a single embedding.
+
+    Modes (matching ``LAYER_POOLINGS`` in ``utils.py``):
+
+    =============  ===========  =============================================
+    Mode           Layers used  Description
+    =============  ===========  =============================================
+    last           12 only      Current baseline — last Transformer layer
+    acoustic       0–3          Low-level spectral / timbre features
+    early_mid      3–5          Transition zone (onset of beat tracking)
+    mid_beat       4–6          Peak beat / rhythm features
+    mid_pitch      6–8          Peak pitch / melody / key features
+    semantic       9–11         High-level genre / instrument features
+    musical_core   4–8          Combined beat + pitch + harmony
+    mean_all       0–12         Equal-weight mean of all 13 layers
+    learned_mix    0–12         13 learnable scalar weights + Softmax
+    =============  ===========  =============================================
+    """
+
+    LAYER_RANGES: dict[str, tuple[int, int]] = {
+        "acoustic":     (0, 4),   # layers 0, 1, 2, 3
+        "early_mid":    (3, 6),   # layers 3, 4, 5
+        "mid_beat":     (4, 7),   # layers 4, 5, 6
+        "mid_pitch":    (6, 9),   # layers 6, 7, 8
+        "semantic":     (9, 12),  # layers 9, 10, 11
+        "musical_core": (4, 9),   # layers 4, 5, 6, 7, 8
+    }
+
+    def __init__(self, mode: str = "last", n_layers: int = 13) -> None:
+        super().__init__()
+        self.mode = mode
+        self.n_layers = n_layers
+        if mode == "learned_mix":
+            # Initialised to zeros → uniform Softmax (1/13 each)
+            self.layer_logits = nn.Parameter(torch.zeros(n_layers))
+
+    def forward(self, all_hidden: torch.Tensor) -> torch.Tensor:
+        """``all_hidden``: ``(B, N_layers, D)`` → output: ``(B, D)``."""
+        if self.mode == "last":
+            return all_hidden[:, -1, :]
+        if self.mode in self.LAYER_RANGES:
+            lo, hi = self.LAYER_RANGES[self.mode]
+            return all_hidden[:, lo:hi, :].mean(dim=1)
+        if self.mode == "mean_all":
+            return all_hidden.mean(dim=1)
+        if self.mode == "learned_mix":
+            weights = F.softmax(self.layer_logits, dim=0)  # (N_layers,)
+            return (all_hidden * weights.view(1, -1, 1)).sum(dim=1)
+        raise ValueError(f"Unknown layer_pooling mode: {self.mode!r}")
+
+    @torch.no_grad()
+    def get_layer_weights(self) -> list[float]:
+        """Return current Softmax weights (useful for visualisation after training)."""
+        if self.mode != "learned_mix":
+            return []
+        return F.softmax(self.layer_logits, dim=0).cpu().tolist()
 
 
 class ProjectionHead(nn.Module):
@@ -252,6 +333,7 @@ class ProjectionHead(nn.Module):
             dropout: float = 0.1,
             use_batchnorm: bool = True,
             chroma_dim: int = 0,
+            layer_pooler: LayerPooler | None = None,
     ) -> None:
         super().__init__()
         if input_dim <= 0:
@@ -260,6 +342,7 @@ class ProjectionHead(nn.Module):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         self.chroma_dim = chroma_dim
+        self.layer_pooler = layer_pooler
 
         layers: list[nn.Module] = []
         if chroma_dim > 0:
@@ -282,6 +365,9 @@ class ProjectionHead(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is (B, D) for single-layer mode, or (B, N_layers, D) for multi-layer
+        if self.layer_pooler is not None and x.dim() == 3:
+            x = self.layer_pooler(x)  # (B, N_layers, D) → (B, D)
         z = self.net(x)
         return F.normalize(z, p=2, dim=-1)
 
@@ -296,6 +382,10 @@ def resolve_projection_input_dim(cfg) -> int:
 
 def build_projection_head(cfg) -> ProjectionHead:
     """Construct a `ProjectionHead` from an `ExperimentConfig`."""
+    layer_pooling = getattr(cfg, "layer_pooling", "last")
+    pooler = None
+    if layer_pooling != "last":
+        pooler = LayerPooler(mode=layer_pooling, n_layers=13)
     return ProjectionHead(
         input_dim=resolve_projection_input_dim(cfg),
         hidden_dim=cfg.projection.hidden_dim,
@@ -303,4 +393,5 @@ def build_projection_head(cfg) -> ProjectionHead:
         dropout=cfg.projection.dropout,
         use_batchnorm=getattr(cfg.projection, "batchnorm", True),
         chroma_dim=getattr(cfg.projection, "chroma_dim", 0),
+        layer_pooler=pooler,
     )

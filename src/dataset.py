@@ -245,9 +245,11 @@ class CachedFeatureDataset(Dataset):
         *,
         dynamic_train: bool = False,
         eval_fixed: bool = False,
+        all_hidden: torch.Tensor | None = None,
     ) -> None:
         self.cfg = cfg
         self.features = features
+        self.all_hidden = all_hidden
         self.group_ids = group_ids
         self.roles = roles
         self.track_ids = track_ids
@@ -292,8 +294,10 @@ class CachedFeatureDataset(Dataset):
 
     def __getitem__(self, i: int) -> dict:
         idx = self.active_indices[i]
+        # Use multi-layer features when available, otherwise single-layer
+        feat = self.all_hidden[idx] if self.all_hidden is not None else self.features[idx]
         return {
-            "feature": self.features[idx],
+            "feature": feat,
             "group_id": int(self.group_ids[idx]),
             "role": str(self.roles[idx]),
             "track_id": str(self.track_ids[idx]),
@@ -548,6 +552,23 @@ def build_cached_datasets(
     track_ids = [str(t) for t in payload["track_id"]]
     seg_ids = [int(s) for s in payload["seg_id"]]
 
+    # Load multi-layer features when needed
+    layer_pooling = getattr(cfg, "layer_pooling", "last")
+    all_hidden = None
+    if layer_pooling != "last":
+        if "all_hidden" in payload:
+            all_hidden = payload["all_hidden"].float()  # (N, 13, D)
+            LOGGER.info(
+                "Loaded all_hidden: shape %s (layer_pooling=%s).",
+                tuple(all_hidden.shape),
+                layer_pooling,
+            )
+        else:
+            raise ValueError(
+                f"layer_pooling={layer_pooling!r} requires 'all_hidden' in features.pt. "
+                "Re-run extract_features.py to cache all hidden layers."
+            )
+
     train_groups, val_groups = split_group_ids(cfg, group_ids)
     train_idx = _indices_for_groups(group_ids, train_groups)
     val_idx = _indices_for_groups(group_ids, val_groups)
@@ -562,10 +583,12 @@ def build_cached_datasets(
     train_ds = CachedFeatureDataset(
         cfg, features, group_ids, roles, track_ids, seg_ids, train_idx,
         dynamic_train=dynamic,
+        all_hidden=all_hidden,
     )
     val_ds = CachedFeatureDataset(
         cfg, features, group_ids, roles, track_ids, seg_ids, val_idx,
         eval_fixed=dynamic,
+        all_hidden=all_hidden,
     )
 
     if dynamic:

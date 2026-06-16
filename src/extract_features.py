@@ -37,6 +37,7 @@ from src.model import (  # noqa: E402
     backbone_forward,
     get_backbone_spec,
     load_backbone,
+    pool_all_layers,
     pool_backbone_output,
 )
 from src.utils import (  # noqa: E402
@@ -158,9 +159,15 @@ def forward_batch(
     waveforms: list[np.ndarray],
     pool: str,
     device: torch.device,
-) -> torch.Tensor:
-    """Run frozen backbone + pooling on a list of 1D waveforms."""
-    hidden, mask = backbone_forward(
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Run frozen backbone + pooling on a list of 1D waveforms.
+
+    Returns ``(pooled_last, pooled_all_layers)`` where
+    ``pooled_last`` is ``(B, D)`` from the last hidden state and
+    ``pooled_all_layers`` is ``(B, N_layers, D)`` from all 13 hidden states
+    (or ``None`` if the backbone does not expose hidden states).
+    """
+    hidden, mask, all_hidden = backbone_forward(
         model,
         processor,
         waveforms,
@@ -169,7 +176,9 @@ def forward_batch(
         device=device,
         mel_transform=None,
     )
-    return pool_backbone_output(hidden, mask, method=pool)
+    pooled_last = pool_backbone_output(hidden, mask, method=pool)
+    pooled_all = pool_all_layers(all_hidden, mask) if all_hidden is not None else None
+    return pooled_last, pooled_all
 
 
 # -----------------------------------------------------------------------------
@@ -272,6 +281,7 @@ def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
     )
 
     features: list[torch.Tensor] = []
+    all_hidden_list: list[torch.Tensor] = []
     metadata: dict[str, list] = {
         "track_id": [],
         "group_id": [],
@@ -290,12 +300,14 @@ def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
         if not waveforms:
             continue
 
-        pooled = forward_batch(
+        pooled, pooled_all = forward_batch(
             model, processor, spec, waveforms, cfg.pool, device
         )
 
         for i, row in enumerate(ok_rows):
             features.append(pooled[i].cpu())
+            if pooled_all is not None:
+                all_hidden_list.append(pooled_all[i].cpu())
             metadata["track_id"].append(str(row["track_id"]))
             metadata["group_id"].append(int(row["group_id"]))
             metadata["role"].append(str(row["role"]))
@@ -326,7 +338,7 @@ def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return {
+    payload = {
         "features": feature_tensor,
         **metadata,
         "hidden_dim": hidden_dim,
@@ -340,6 +352,17 @@ def extract_all(cfg: ExperimentConfig, batch_size: int = 8) -> dict:
         "segments_per_track": cfg.segments_per_track,
         "experiment_name": cfg.experiment_name,
     }
+
+    if all_hidden_list:
+        all_hidden_tensor = torch.stack(all_hidden_list, dim=0)  # (N, 13, D)
+        payload["all_hidden"] = all_hidden_tensor
+        LOGGER.info(
+            "Also cached all %d hidden layers: shape %s.",
+            all_hidden_tensor.shape[1],
+            tuple(all_hidden_tensor.shape),
+        )
+
+    return payload
 
 
 def save_features(payload: dict, dest: Path) -> None:

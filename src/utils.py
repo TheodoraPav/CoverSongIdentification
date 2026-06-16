@@ -50,6 +50,17 @@ POOLS = ("mean", "max")
 BACKBONES = ("mert", "mert_large")
 EVAL_LEVELS = ("segment", "track_pool", "track_dtw")
 SEGMENT_POOL_MODES = ("fixed", "dynamic")
+LAYER_POOLINGS = (
+    "last",         # layer 12 only (current baseline)
+    "acoustic",     # layers 0-3 (spectral / timbre)
+    "early_mid",    # layers 3-5 (transition zone)
+    "mid_beat",     # layers 4-6 (beat / rhythm)
+    "mid_pitch",    # layers 6-8 (pitch / melody / key)
+    "semantic",     # layers 9-11 (genre / instrument)
+    "musical_core", # layers 4-8 (beat + pitch + harmony)
+    "mean_all",     # equal-weight mean of all 13 layers
+    "learned_mix",  # 13 learnable scalar weights + Softmax
+)
 
 
 # -----------------------------------------------------------------------------
@@ -139,6 +150,7 @@ class ExperimentConfig:
     segment_pool_max: int = 20
     seed: int = 42
     eval_level: str = "segment"
+    layer_pooling: str = "last"
     training: TrainingConfig = field(default_factory=TrainingConfig)
     matcher: MatcherConfig = field(default_factory=MatcherConfig)
 
@@ -151,6 +163,7 @@ class ExperimentConfig:
             ("pool", self.pool, POOLS),
             ("eval_level", self.eval_level, EVAL_LEVELS),
             ("segment_pool_mode", self.segment_pool_mode, SEGMENT_POOL_MODES),
+            ("layer_pooling", self.layer_pooling, LAYER_POOLINGS),
         )
         for name, value, allowed in enum_fields:
             _ensure_in(name, value, allowed)
@@ -272,6 +285,7 @@ def load_config(path: str | os.PathLike) -> ExperimentConfig:
         segment_pool_max=raw.get("segment_pool_max", 20),
         seed=raw.get("seed", 42),
         eval_level=raw.get("eval_level", "segment"),
+        layer_pooling=raw.get("layer_pooling", "last"),
         training=training,
         matcher=matcher,
     )
