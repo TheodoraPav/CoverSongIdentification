@@ -224,6 +224,9 @@ def plot_similarity_comparison(
     # plot side-by-side pairwise similarity matrix heatmaps showing before vs. after learning
     LOGGER.info("Computing cosine similarity matrices for comparative heatmap...")
     
+    if raw_embeddings.dim() == 3:
+        raw_embeddings = raw_embeddings[:, -1, :]
+
     # normalize features -> dot product equal to cosine similarity
     raw_norm = F.normalize(raw_embeddings.float(), p=2, dim=1)
     z_norm = F.normalize(z_embeddings.float(), p=2, dim=1)

@@ -125,13 +125,28 @@ def run_training(cfg: ExperimentConfig) -> dict:
             cfg.training.proxy_delta,
         )
 
-    params = list(head.parameters())
+    pooler_params = []
+    other_params = []
+    for p_name, param in head.named_parameters():
+        if "layer_pooler" in p_name or "layer_logits" in p_name:
+            pooler_params.append(param)
+        else:
+            other_params.append(param)
+
+    param_groups = [{"params": other_params, "lr": cfg.training.lr}]
+    if pooler_params:
+        LOGGER.info(
+            "Layer pooler parameters detected. Using pooler_lr=%.4f (base lr=%.4e)",
+            cfg.training.pooler_lr,
+            cfg.training.lr,
+        )
+        param_groups.append({"params": pooler_params, "lr": cfg.training.pooler_lr})
+
     if proxy_bank is not None:
-        params += list(proxy_bank.parameters())
+        param_groups.append({"params": list(proxy_bank.parameters()), "lr": cfg.training.lr})
 
     optimizer = torch.optim.AdamW(
-        params,
-        lr=cfg.training.lr,
+        param_groups,
         weight_decay=cfg.training.weight_decay,
     )
 

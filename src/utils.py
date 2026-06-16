@@ -128,6 +128,7 @@ class TrainingConfig:
     groups_per_batch: int | None = None
     segments_per_role_per_batch: int | None = None
     group_sampler_drop_last: bool = True
+    pooler_lr: float = 0.01
 
 
 @dataclass
