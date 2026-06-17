@@ -76,6 +76,8 @@ class ProjectionConfig:
     dropout: float = 0.3
     batchnorm: bool = True
     chroma_dim: int = 0  # 0 = disabled; 24 (2×12 semitones) = chroma bottleneck
+    feature_noise: float = 0.0
+    feature_dropout: float = 0.0
 
 
 @dataclass

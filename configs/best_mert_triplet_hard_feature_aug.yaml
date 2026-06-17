@@ -1,0 +1,45 @@
+# Feature-Level Online Augmentation Experiment Config
+experiment_name: best_mert_triplet_hard_feature_aug
+
+backbone: mert
+backbone_checkpoint: m-a-p/MERT-v1-95M
+sample_rate: 24000
+
+projection:
+  hidden_dim: 512
+  output_dim: 128
+  dropout: 0.3
+  batchnorm: true
+  feature_noise: 0.02
+  feature_dropout: 0.1
+
+augment: none
+sampling: beat
+loss: triplet_hard
+pool: mean
+segment_pool_mode: dynamic
+segments_per_track: 10
+segment_pool_max: 40
+seed: 42
+eval_level: track_dtw
+
+training:
+  batch_size: 32
+  epochs: 50
+  lr: 0.0001
+  weight_decay: 0.0001
+  val_every: 1
+  val_fraction: 0.2
+  early_stopping_patience: 12
+  triplet_margin: 0.3
+  use_group_batch_sampler: true
+  num_workers: 0
+  pin_memory: false
+
+paths:
+  manifest: /kaggle/input/datasets/theodorapavlidou/cover-song-dataset/cover-dataset/data/audio_manifest.csv
+  segments_dir: /kaggle/working/data_processed
+  audio_root: /kaggle/input/datasets/theodorapavlidou/cover-song-dataset/cover-dataset
+  cache_dir: /kaggle/working/cached_features
+  checkpoints: /kaggle/working/checkpoints
+  results_dir: /kaggle/working/results
