@@ -64,6 +64,31 @@ def run_csm_stage(cfg) -> dict:
             "matcher.enabled is false. Set matcher.enabled: true in the YAML config."
         )
 
+    # Archive the existing CSM matcher checkpoint and metrics to prevent overwrites
+    from src.utils import csm_matcher_checkpoint_path_for, csm_metrics_file_for
+    import datetime
+    import shutil
+
+    csm_ckpt = csm_matcher_checkpoint_path_for(cfg)
+    if csm_ckpt.is_file():
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        exp_dir = csm_ckpt.parent
+        archive_ckpt = exp_dir / f"csm_matcher_archived_{timestamp}.pt"
+        try:
+            shutil.move(str(csm_ckpt), str(archive_ckpt))
+            print(f"Archived previous CSM matcher checkpoint to {archive_ckpt}")
+        except Exception as e:
+            print(f"Warning: Could not archive CSM matcher checkpoint: {e}")
+
+        csm_metrics = csm_metrics_file_for(cfg)
+        if csm_metrics.is_file():
+            archive_metrics = exp_dir / f"metrics_csm_archived_{timestamp}.json"
+            try:
+                shutil.move(str(csm_metrics), str(archive_metrics))
+                print(f"Archived previous CSM matcher metrics to {archive_metrics}")
+            except Exception as e:
+                print(f"Warning: Could not archive CSM matcher metrics: {e}")
+
     device = pick_device()
     head, best_epoch = _load_projection_head(cfg, device)
 

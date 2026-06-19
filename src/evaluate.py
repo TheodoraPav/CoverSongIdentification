@@ -206,14 +206,14 @@ def _rank_and_evaluate(
     }
 
 
-def evaluate_track_level(data: dict) -> tuple[dict, dict]:
-    """Compute track-level evaluation metrics: Pooling (Early Fusion) and Sequence DTW.
+def evaluate_track_level(data: dict) -> tuple[dict, dict, dict]:
+    """Compute track-level evaluation metrics: Pooling (Early Fusion), Sequence DTW, and Weighted Voting.
     
     Args:
         data: A dictionary containing z, group_id, role, track_id, and seg_id.
             
     Returns:
-        A tuple of dictionaries: (pool_metrics, dtw_metrics)
+        A tuple of dictionaries: (pool_metrics, dtw_metrics, voting_metrics)
     """
     track_sequences, track_info = build_track_sequences(data)
 
@@ -222,7 +222,7 @@ def evaluate_track_level(data: dict) -> tuple[dict, dict]:
     
     if len(query_tids) == 0 or len(gallery_tids) == 0:
         empty = {"mrr": 0.0, "top1": 0.0, "top5": 0.0}
-        return empty, empty
+        return empty, empty, empty
         
     query_gids = np.array([track_info[tid][0] for tid in query_tids])
     gallery_gids = np.array([track_info[tid][0] for tid in gallery_tids])
@@ -247,7 +247,18 @@ def evaluate_track_level(data: dict) -> tuple[dict, dict]:
             
     dtw_metrics = _rank_and_evaluate(dtw_distances, query_gids, gallery_gids, descending=False)
     
-    return pool_metrics, dtw_metrics
+    # --- Track Weighted Voting (Late Fusion no-alignment matching) ---
+    voting_similarities = np.zeros((len(query_tids), len(gallery_tids)))
+    for i, q_tid in enumerate(query_tids):
+        s_q = track_sequences[q_tid]
+        for j, g_tid in enumerate(gallery_tids):
+            s_g = track_sequences[g_tid]
+            segment_similarities = np.dot(s_q, s_g.T)
+            voting_similarities[i, j] = float(np.mean(np.max(segment_similarities, axis=1)))
+            
+    voting_metrics = _rank_and_evaluate(voting_similarities, query_gids, gallery_gids, descending=True)
+    
+    return pool_metrics, dtw_metrics, voting_metrics
 
 
 def evaluate_loader(
@@ -269,7 +280,7 @@ def evaluate_loader(
     sil = compute_silhouette(data["z"], data["group_id"])
 
     # Track-level metrics
-    pool_metrics, dtw_metrics = evaluate_track_level(data)
+    pool_metrics, dtw_metrics, voting_metrics = evaluate_track_level(data)
     
     track_pool_mrr = pool_metrics["mrr"]
     track_pool_top1 = pool_metrics["top1"]
@@ -279,10 +290,15 @@ def evaluate_loader(
     track_dtw_top1 = dtw_metrics["top1"]
     track_dtw_top5 = dtw_metrics["top5"]
 
+    track_voting_mrr = voting_metrics["mrr"]
+    track_voting_top1 = voting_metrics["top1"]
+    track_voting_top5 = voting_metrics["top5"]
+
     # Show formatted comparison table
     seg_sel = " [Selected]" if cfg.eval_level == "segment" else ""
     pool_sel = " [Selected]" if cfg.eval_level == "track_pool" else ""
     dtw_sel = " [Selected]" if cfg.eval_level == "track_dtw" else ""
+    voting_sel = " [Selected]" if cfg.eval_level == "track_voting" else ""
     
     LOGGER.info("=" * 75)
     LOGGER.info("EVALUATION LEVEL COMPARISON (mrr / top1 / top5)")
@@ -290,6 +306,7 @@ def evaluate_loader(
     LOGGER.info("Segment-Level (Baseline) : %.4f / %.4f / %.4f%s", mrr, top1, top5, seg_sel)
     LOGGER.info("Track-Level Mean Pooling : %.4f / %.4f / %.4f%s", track_pool_mrr, track_pool_top1, track_pool_top5, pool_sel)
     LOGGER.info("Track-Level Sequence DTW : %.4f / %.4f / %.4f%s", track_dtw_mrr, track_dtw_top1, track_dtw_top5, dtw_sel)
+    LOGGER.info("Track-Level Weighted Vote: %.4f / %.4f / %.4f%s", track_voting_mrr, track_voting_top1, track_voting_top5, voting_sel)
 
     track_csm_mrr = None
     track_csm_top1 = None
@@ -336,6 +353,10 @@ def evaluate_loader(
         primary_mrr = track_dtw_mrr
         primary_top1 = track_dtw_top1
         primary_top5 = track_dtw_top5
+    elif cfg.eval_level == "track_voting":
+        primary_mrr = track_voting_mrr
+        primary_top1 = track_voting_top1
+        primary_top5 = track_voting_top5
     else:
         primary_mrr = mrr
         primary_top1 = top1
@@ -365,6 +386,11 @@ def evaluate_loader(
         "track_dtw_mrr": round(track_dtw_mrr, 6),
         "track_dtw_top1": round(track_dtw_top1, 6),
         "track_dtw_top5": round(track_dtw_top5, 6),
+
+        # Detailed track voting metrics
+        "track_voting_mrr": round(track_voting_mrr, 6),
+        "track_voting_top1": round(track_voting_top1, 6),
+        "track_voting_top5": round(track_voting_top5, 6),
     }
 
     if track_csm_mrr is not None:

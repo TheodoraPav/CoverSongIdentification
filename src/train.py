@@ -106,6 +106,21 @@ def train_one_epoch(
 
 
 def run_training(cfg: ExperimentConfig) -> dict:
+    # Archive the existing run directory if it contains a trained checkpoint to prevent overwrites
+    from src.utils import experiment_dir_for
+    import datetime
+    import shutil
+
+    exp_dir = experiment_dir_for(cfg)
+    if exp_dir.exists() and (exp_dir / "best_head.pt").is_file():
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_dir = exp_dir.parent / f"{exp_dir.name}_archived_{timestamp}"
+        try:
+            shutil.move(str(exp_dir), str(archive_dir))
+            print(f"Archived previous run directory {exp_dir} to {archive_dir}")
+        except Exception as e:
+            print(f"Warning: Could not archive previous run directory: {e}")
+
     get_logger("train", log_file=log_file_for(cfg))
 
     set_global_seed(cfg.seed)

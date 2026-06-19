@@ -159,11 +159,11 @@ def plot_umap_space(
     bg_mask = ~np.isin(gids, highlight_groups)
     ax.scatter(
         reduced[bg_mask, 0], reduced[bg_mask, 1],
-        c="lightgray", alpha=0.4, s=25, label="Other Songs", edgecolors="none"
+        c="#cbd5e1", alpha=0.3, s=20, label="Other Songs", edgecolors="none"
     )
 
-    # use distinct color cycle and shapes for highlighted cover groups
-    colors = plt.cm.tab10(np.linspace(0, 1, len(highlight_groups)))
+    # use distinct color cycle and shapes for highlighted cover groups (Premium modern colors)
+    colors = ["#4338ca", "#db2777", "#0d9488", "#d97706", "#7c3aed", "#059669"]
     markers = ["o", "s", "^", "D", "v", "p"]
 
     for idx, gid in enumerate(highlight_groups):
@@ -171,7 +171,7 @@ def plot_umap_space(
         group_reduced = reduced[mask]
         group_roles = np.array(roles)[mask]
 
-        c = colors[idx]
+        c = colors[idx % len(colors)]
         m = markers[idx % len(markers)]
 
         # plot validation covers
@@ -179,7 +179,7 @@ def plot_umap_space(
         if np.any(cov_mask):
             ax.scatter(
                 group_reduced[cov_mask, 0], group_reduced[cov_mask, 1],
-                color=c, marker=m, s=60, alpha=0.85, edgecolors="black", linewidths=0.6,
+                color=c, marker=m, s=70, alpha=0.85, edgecolors="white", linewidths=0.8,
                 label=f"Group {gid} (Covers)"
             )
 
@@ -188,7 +188,7 @@ def plot_umap_space(
         if np.any(orig_mask):
             ax.scatter(
                 group_reduced[orig_mask, 0], group_reduced[orig_mask, 1],
-                color=c, marker=m, s=160, alpha=1.0, edgecolors="black", linewidths=2.0,
+                color=c, marker=m, s=180, alpha=1.0, edgecolors="black", linewidths=2.0,
                 label=f"Group {gid} (Original Query)"
             )
 
@@ -197,16 +197,19 @@ def plot_umap_space(
             for cov_coord in group_reduced[cov_mask]:
                 ax.plot(
                     [orig_coord[0], cov_coord[0]], [orig_coord[1], cov_coord[1]],
-                    color=c, linestyle="--", linewidth=1.2, alpha=0.7
+                    color=c, linestyle="--", linewidth=1.2, alpha=0.6
                 )
 
     ax.set_title(title, fontsize=13, fontweight="bold", pad=15)
-    ax.legend(loc="upper right", frameon=True, facecolor="white", edgecolor="lightgray", fontsize=9.5)
-    ax.grid(True, linestyle=":", alpha=0.5)
+    ax.legend(loc="upper right", frameon=True, facecolor="white", edgecolor="#e2e8f0", fontsize=9.5)
+    ax.grid(True, linestyle="--", color="#e2e8f0", alpha=0.5)
     
     # clean up plot axes
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#cbd5e1")
+    ax.spines["bottom"].set_color("#cbd5e1")
+    ax.tick_params(colors="#64748b")
     
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -249,16 +252,16 @@ def plot_similarity_comparison(
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-    # heatmap before projection
-    im1 = ax1.imshow(sim_raw, cmap="viridis", vmin=sim_raw.min(), vmax=1.0)
-    ax1.set_title("Before Projection (Raw Backbone Features)", fontsize=11, fontweight="bold", pad=10)
+    # heatmap before projection (magma cmap with dynamic vmin for contrast stretching)
+    im1 = ax1.imshow(sim_raw, cmap="magma", vmin=sim_raw.min(), vmax=1.0)
+    ax1.set_title("Before Projection (Raw MERT Features)", fontsize=11, fontweight="bold", pad=10)
     ax1.set_xlabel("Song Segments (Grouped)")
     ax1.set_ylabel("Song Segments (Grouped)")
     fig.colorbar(im1, ax=ax1, label="Raw Cosine Similarity", fraction=0.046, pad=0.04)
 
-    # heatmap after projection
-    im2 = ax2.imshow(sim_z, cmap="viridis", vmin=sim_z.min(), vmax=1.0)
-    ax2.set_title("After Projection (Trainable Metric Space)", fontsize=11, fontweight="bold", pad=10)
+    # heatmap after projection (magma cmap with dynamic vmin for contrast stretching)
+    im2 = ax2.imshow(sim_z, cmap="magma", vmin=sim_z.min(), vmax=1.0)
+    ax2.set_title("After Projection (Learned Metric Space)", fontsize=11, fontweight="bold", pad=10)
     ax2.set_xlabel("Song Segments (Grouped)")
     fig.colorbar(im2, ax=ax2, label="Projected Cosine Similarity", fraction=0.046, pad=0.04)
 
@@ -266,8 +269,8 @@ def plot_similarity_comparison(
     boundaries = np.where(sub_gids[:-1] != sub_gids[1:])[0]
     for b in boundaries:
         for ax in (ax1, ax2):
-            ax.axhline(b + 0.5, color="white", linewidth=0.8, linestyle=":")
-            ax.axvline(b + 0.5, color="white", linewidth=0.8, linestyle=":")
+            ax.axhline(b + 0.5, color="white", linewidth=0.6, linestyle=":", alpha=0.6)
+            ax.axvline(b + 0.5, color="white", linewidth=0.6, linestyle=":", alpha=0.6)
 
     plt.suptitle("Embedding Cosine Similarity Matrix Comparison (Before vs. After)", fontsize=14, fontweight="bold", y=0.98)
     fig.tight_layout()
@@ -292,20 +295,40 @@ def plot_silhouette_progression(history_path: Path, path: Path) -> None:
         return
 
     fig, ax = plt.subplots(figsize=(8, 5))
+    epochs = df["epoch"].values
+    scores = df["val_silhouette"].values
+    
+    # Plot line with dual-stroke style
     ax.plot(
-        df["epoch"], df["val_silhouette"],
-        color="tab:purple", marker="d", markersize=6, linewidth=2.0, label="Val Silhouette"
+        epochs, scores,
+        color="#6366f1", linewidth=2.5, label="Val Silhouette",
+        zorder=3
+    )
+    # Add scatter markers with premium design
+    ax.scatter(
+        epochs, scores,
+        color="#4f46e5", edgecolor="#6366f1", facecolor="white",
+        linewidths=1.5, s=40, zorder=4
     )
     
-    ax.set_xlabel("Epoch", fontsize=11, fontweight="bold")
-    ax.set_ylabel("Silhouette Score (Cosine Distance)", fontsize=11, fontweight="bold")
+    # Shaded gradient area under the curve
+    ax.fill_between(
+        epochs, scores, y2=min(scores) - 0.01,
+        color="#6366f1", alpha=0.1, zorder=2
+    )
+    
+    ax.set_xlabel("Epoch", fontsize=11, fontweight="bold", labelpad=8)
+    ax.set_ylabel("Silhouette Score (Cosine Distance)", fontsize=11, fontweight="bold", labelpad=8)
     ax.set_title("Validation Embedding Cluster Cohesion Trend (Silhouette Score)", fontsize=12, fontweight="bold", pad=12)
-    ax.grid(True, linestyle=":", alpha=0.6)
-    ax.legend(loc="lower right", frameon=True, edgecolor="lightgray")
+    ax.grid(True, linestyle="--", color="#e2e8f0", alpha=0.5)
+    ax.legend(loc="lower right", frameon=True, facecolor="white", edgecolor="#e2e8f0")
 
     # Clean up plot axes
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#cbd5e1")
+    ax.spines["bottom"].set_color("#cbd5e1")
+    ax.tick_params(colors="#64748b")
 
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)

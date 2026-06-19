@@ -48,7 +48,7 @@ SAMPLINGS = ("random", "stratified", "beat", "mixed")
 LOSSES = ("triplet", "triplet_hard", "ntxent", "proxy_anchor")
 POOLS = ("mean", "max")
 BACKBONES = ("mert", "mert_large")
-EVAL_LEVELS = ("segment", "track_pool", "track_dtw")
+EVAL_LEVELS = ("segment", "track_pool", "track_dtw", "track_voting")
 SEGMENT_POOL_MODES = ("fixed", "dynamic")
 LAYER_POOLINGS = (
     "last",         # layer 12 only (current baseline)
@@ -421,67 +421,64 @@ def features_file_for(cfg: ExperimentConfig) -> Path:
 
 
 def experiment_id_for(cfg: ExperimentConfig) -> str:
-    """Generate a unique experiment ID combining all configuration parameters."""
-    base = (
-        f"{cfg.backbone}_{cfg.loss}_{cfg.augment}_{cfg.sampling}_seed{cfg.seed}_"
-        f"{cfg.pool}_{cfg.eval_level}"
-    )
-    if cfg.segment_pool_mode == "dynamic":
-        return f"{base}_dyn{cfg.segments_per_track}from{cfg.segment_pool_max}"
-    return base
+    """Return the experiment name as the unique identifier."""
+    return cfg.experiment_name
+
+
+
+def experiment_dir_for(cfg: ExperimentConfig) -> Path:
+    """`results/{experiment_id}/`."""
+    return Path(cfg.paths.results_dir) / experiment_id_for(cfg)
 
 
 def checkpoint_path_for(cfg: ExperimentConfig) -> Path:
-    """`checkpoints/{backbone}/{experiment_id}_best_head.pt`."""
-    return Path(cfg.paths.checkpoints) / cfg.backbone / f"{experiment_id_for(cfg)}_best_head.pt"
+    """`results/{experiment_id}/best_head.pt`."""
+    return experiment_dir_for(cfg) / "best_head.pt"
 
 
 def csm_matcher_checkpoint_path_for(cfg: ExperimentConfig) -> Path:
-    """`checkpoints/{backbone}/{experiment_id}_csm_matcher.pt`."""
-    return (
-        Path(cfg.paths.checkpoints) / cfg.backbone
-        / f"{experiment_id_for(cfg)}_csm_matcher.pt"
-    )
+    """`results/{experiment_id}/csm_matcher.pt`."""
+    return experiment_dir_for(cfg) / "csm_matcher.pt"
 
 
 def csm_metrics_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/metrics/{experiment_id}_csm.json`."""
-    return Path(cfg.paths.results_dir) / "metrics" / f"{experiment_id_for(cfg)}_csm.json"
+    """`results/{experiment_id}/metrics_csm.json`."""
+    return experiment_dir_for(cfg) / "metrics_csm.json"
 
 
 def metrics_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/metrics/{experiment_id}.json`."""
-    return Path(cfg.paths.results_dir) / "metrics" / f"{experiment_id_for(cfg)}.json"
+    """`results/{experiment_id}/metrics.json`."""
+    return experiment_dir_for(cfg) / "metrics.json"
 
 
 def history_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/history/{experiment_id}_history.csv`."""
-    return Path(cfg.paths.results_dir) / "history" / f"{experiment_id_for(cfg)}_history.csv"
+    """`results/{experiment_id}/history.csv`."""
+    return experiment_dir_for(cfg) / "history.csv"
 
 
 def curves_plot_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/figures/{experiment_id}_curves.png`."""
-    return Path(cfg.paths.results_dir) / "figures" / f"{experiment_id_for(cfg)}_curves.png"
+    """`results/{experiment_id}/curves.png`."""
+    return experiment_dir_for(cfg) / "curves.png"
 
 
 def log_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/logs/{experiment_id}.log`."""
-    return Path(cfg.paths.results_dir) / "logs" / f"{experiment_id_for(cfg)}.log"
+    """`results/{experiment_id}/training.log`."""
+    return experiment_dir_for(cfg) / "training.log"
 
 
 def umap_plot_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/figures/{experiment_id}_umap.png`."""
-    return Path(cfg.paths.results_dir) / "figures" / f"{experiment_id_for(cfg)}_umap.png"
+    """`results/{experiment_id}/umap.png`."""
+    return experiment_dir_for(cfg) / "umap.png"
 
 
 def similarity_plot_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/figures/{experiment_id}_similarity.png`."""
-    return Path(cfg.paths.results_dir) / "figures" / f"{experiment_id_for(cfg)}_similarity.png"
+    """`results/{experiment_id}/similarity.png`."""
+    return experiment_dir_for(cfg) / "similarity.png"
 
 
 def silhouette_plot_file_for(cfg: ExperimentConfig) -> Path:
-    """`results/figures/{experiment_id}_silhouette.png`."""
-    return Path(cfg.paths.results_dir) / "figures" / f"{experiment_id_for(cfg)}_silhouette.png"
+    """`results/{experiment_id}/silhouette.png`."""
+    return experiment_dir_for(cfg) / "silhouette.png"
 
 
 def _collapse_duplicate_path_parts(path: Path) -> Path:
