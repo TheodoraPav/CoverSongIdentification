@@ -25,11 +25,10 @@ from src.utils import (
     checkpoint_path_for,
     metrics_file_for,
     pick_device,
-    save_metrics,
 )
 from src.dataset import build_dataloaders
 from src.model import build_projection_head
-from src.evaluate import evaluate_loader
+from src.evaluate import evaluate_loader, save_metrics
 from src.checkpointing import load_head_from_checkpoint
 
 
