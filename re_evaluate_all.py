@@ -7,57 +7,96 @@ the new track_voting_mrr / track_voting_top1 / track_voting_top5 values.
 
 import os
 import json
+import shutil
 import torch
 import glob
 import yaml
 from pathlib import Path
 
-# Set paths
+# ---------------------------------------------------------------------------
+# Auto-discover repo & Kaggle paths
+# ---------------------------------------------------------------------------
 REPO = "/kaggle/working/CoverSongIdentification"
 if not os.path.isdir(REPO):
-    REPO = os.getcwd()  # local path fallback
+    REPO = os.getcwd()
 
 import sys
 sys.path.insert(0, REPO)
 
-from src.utils import (
-    load_config,
-    checkpoint_path_for,
-    metrics_file_for,
-    pick_device,
-)
+from src.utils import load_config, pick_device
 from src.dataset import build_dataloaders
 from src.model import build_projection_head
 from src.evaluate import evaluate_loader, save_metrics
 from src.checkpointing import load_head_from_checkpoint
 
 
-# ---------------------------------------------------------------------------
-# Heuristic: detect BN from experiment name
-# ---------------------------------------------------------------------------
 def _uses_batchnorm(name: str) -> bool:
     """Experiments with '_bn_' in their name were trained with BatchNorm."""
     return "_bn_" in name or name.endswith("_bn")
 
 
+def _find_input_results_dir() -> str | None:
+    """Find the results/ dir inside the Kaggle input dataset."""
+    hits = glob.glob("/kaggle/input/**/results/kaggle_all_results.json", recursive=True)
+    if hits:
+        return os.path.dirname(hits[0])
+    return None
+
 
 def main():
-    results_dir = os.path.join(REPO, "results")
-    if not os.path.isdir(results_dir):
-        results_dir = "/kaggle/working/results"
+    # --- Locate kaggle_all_results.json ---
+    # On Kaggle the results live in the read-only input dataset.
+    # We copy them to /kaggle/working/results so we can update them.
+    input_results_dir = _find_input_results_dir()
 
-    all_results_path = os.path.join(results_dir, "kaggle_all_results.json")
-    if not os.path.isfile(all_results_path):
-        print(f"Error: {all_results_path} not found.")
-        return
+    output_dir = "/kaggle/working/results"
+    if not os.path.isdir("/kaggle/working"):
+        # Local fallback
+        output_dir = os.path.join(REPO, "results")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    if input_results_dir:
+        src_json = os.path.join(input_results_dir, "kaggle_all_results.json")
+        dst_json = os.path.join(output_dir, "kaggle_all_results.json")
+        if not os.path.isfile(dst_json):
+            shutil.copy2(src_json, dst_json)
+            print(f"Copied kaggle_all_results.json to {output_dir}")
+        all_results_path = dst_json
+    else:
+        # Fallback: check REPO/results or output_dir
+        for candidate in [
+            os.path.join(output_dir, "kaggle_all_results.json"),
+            os.path.join(REPO, "results", "kaggle_all_results.json"),
+        ]:
+            if os.path.isfile(candidate):
+                all_results_path = candidate
+                break
+        else:
+            print("Error: kaggle_all_results.json not found anywhere.")
+            return
 
     with open(all_results_path, encoding="utf-8") as f:
         all_results = json.load(f)
 
     device = pick_device()
     print(f"Device: {device}")
+    print(f"Results JSON: {all_results_path}")
+    print(f"Input results dir: {input_results_dir}")
+    print(f"Output dir: {output_dir}")
+    print(f"Total experiments: {len(all_results)}")
+    print()
 
     base_config_path = os.path.join(REPO, "configs/baseline_mert_ntxent_kaggle.yaml")
+
+    # --- Discover paths ---
+    manifest_hits = glob.glob("/kaggle/input/**/audio_manifest.csv", recursive=True)
+    if manifest_hits:
+        manifest_path = manifest_hits[0]
+        audio_root = os.path.dirname(os.path.dirname(manifest_path))
+    else:
+        manifest_path = "cover-dataset/data/audio_manifest.csv"
+        audio_root = "cover-dataset"
 
     updated_count = 0
 
@@ -66,31 +105,11 @@ def main():
         if not overrides:
             continue
 
-        # Reconstruct paths
-        manifest_hits = glob.glob(
-            "/kaggle/input/**/audio_manifest.csv", recursive=True
-        )
-        if manifest_hits:
-            manifest_path = manifest_hits[0]
-            audio_root = os.path.dirname(os.path.dirname(manifest_path))
-        else:
-            manifest_path = "cover-dataset/data/audio_manifest.csv"
-            audio_root = "cover-dataset"
-
-        paths = {
-            "manifest": manifest_path,
-            "audio_root": audio_root,
-            "segments_dir": "/kaggle/working/data_processed",
-            "cache_dir": "/kaggle/working/cached_features",
-            "checkpoints": "/kaggle/working/checkpoints",
-            "results_dir": results_dir,
-        }
-
-        # Build config from base + overrides
+        # ---- Build the config ----
         with open(base_config_path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
 
-        # Deep merge nested dicts so sub-keys aren't lost
+        # Deep merge nested dicts
         for section in ("training", "matcher", "projection"):
             if section in overrides and isinstance(overrides[section], dict):
                 merged = dict(raw.get(section) or {})
@@ -98,78 +117,89 @@ def main():
                 overrides = {**overrides, section: merged}
 
         raw.update(overrides)
-        raw["paths"] = paths
         raw["experiment_name"] = name
 
-        # --- Auto-detect BN from experiment name ---
+        # Auto-detect BN from experiment name
         bn = _uses_batchnorm(name)
         raw.setdefault("projection", {})
         raw["projection"]["batchnorm"] = bn
 
+        # Set paths — results_dir points to the INPUT dataset (read-only)
+        # so checkpoint_path_for and metrics_file_for resolve correctly
+        raw["paths"] = {
+            "manifest": manifest_path,
+            "audio_root": audio_root,
+            "segments_dir": "/kaggle/working/data_processed",
+            "cache_dir": "/kaggle/working/cached_features",
+            "checkpoints": "/kaggle/working/checkpoints",
+            "results_dir": input_results_dir or output_dir,
+        }
 
-        # Write temp yaml so load_config can parse it
-        tmp_yaml = os.path.join(results_dir, "_re_eval.yaml")
+        # Write temp yaml for load_config
+        tmp_yaml = os.path.join(output_dir, "_re_eval.yaml")
         with open(tmp_yaml, "w", encoding="utf-8") as f:
             yaml.dump(raw, f)
 
         cfg = load_config(tmp_yaml)
 
-        ckpt_path = checkpoint_path_for(cfg)
-        metrics_path = metrics_file_for(cfg)
-
-        if ckpt_path.is_file():
-            print(f"Checking {name}...")
-
-            # Load current metrics – skip if track_voting_mrr already present
-            has_voting = False
-            current_metrics = {}
-            if metrics_path.is_file():
-                try:
-                    with open(metrics_path, encoding="utf-8") as f:
-                        current_metrics = json.load(f)
-                    if "track_voting_mrr" in current_metrics:
-                        has_voting = True
-                except Exception as e:
-                    print(f"  Error reading metrics for {name}: {e}")
-
-            if has_voting:
-                print(f" Already has voting metrics. Skipping.")
-                continue
-
-            print(f" Running evaluation for {name} (bn={bn})...")
-            try:
-                _, val_loader = build_dataloaders(cfg)
-                head = build_projection_head(cfg).to(device)
-                payload = torch.load(
-                    ckpt_path, map_location=device, weights_only=False
-                )
-                best_epoch = load_head_from_checkpoint(head, payload, device)
-
-                metrics = evaluate_loader(
-                    cfg, head, val_loader, device, epoch=best_epoch
-                )
-
-                current_metrics.update(metrics)
-                save_metrics(current_metrics, metrics_path)
-
-                all_results[name].update(current_metrics)
-                updated_count += 1
-                print(f" Updated {name} successfully.")
-            except Exception as e:
-                print(f" Error evaluating {name}: {e}")
-                import traceback
-                traceback.print_exc()
+        # Checkpoint lives in the input dataset: results/{name}/best_head.pt
+        if input_results_dir:
+            ckpt_path = Path(input_results_dir) / name / "best_head.pt"
         else:
-            print(f"Checkpoint not found for {name} at {ckpt_path}")
+            ckpt_path = Path(cfg.paths.results_dir) / name / "best_head.pt"
 
+        if not ckpt_path.is_file():
+            print(f"  SKIP {name}: no checkpoint at {ckpt_path}")
+            continue
+
+        print(f"Checking {name}...")
+
+        # Check if track_voting_mrr already exists
+        if "track_voting_mrr" in data:
+            print(f"  Already has voting metrics. Skipping.")
+            continue
+
+        print(f"  Running evaluation (bn={bn})...")
+        try:
+            _, val_loader = build_dataloaders(cfg)
+            head = build_projection_head(cfg).to(device)
+            payload = torch.load(ckpt_path, map_location=device, weights_only=False)
+            best_epoch = load_head_from_checkpoint(head, payload, device)
+
+            metrics = evaluate_loader(cfg, head, val_loader, device, epoch=best_epoch)
+
+            # Save updated metrics to output dir
+            out_exp_dir = Path(output_dir) / name
+            out_exp_dir.mkdir(parents=True, exist_ok=True)
+            out_metrics = out_exp_dir / "metrics.json"
+
+            # Start from existing metrics if available
+            existing = dict(data)
+            existing.pop("config_overrides", None)
+            existing.update(metrics)
+            save_metrics(existing, out_metrics)
+
+            # Update in-memory results
+            all_results[name].update(metrics)
+            updated_count += 1
+            print(f"  OK - Updated {name}.")
+        except Exception as e:
+            print(f"  ERROR evaluating {name}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # Save updated kaggle_all_results.json
     if updated_count > 0:
         with open(all_results_path, "w", encoding="utf-8") as f:
             json.dump(all_results, f, indent=2)
-        print(
-            f"\n Done! Updated {updated_count} experiments in {all_results_path}."
-        )
+        print(f"\nDone! Updated {updated_count} experiments in {all_results_path}.")
     else:
-        print("\n No experiments needed re-evaluation.")
+        print("\nNo experiments needed re-evaluation.")
+
+    # Cleanup
+    tmp = os.path.join(output_dir, "_re_eval.yaml")
+    if os.path.isfile(tmp):
+        os.remove(tmp)
 
 
 if __name__ == "__main__":
