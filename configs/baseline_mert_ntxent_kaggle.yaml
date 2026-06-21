@@ -15,6 +15,7 @@ projection:
   hidden_dim: 512
   output_dim: 128
   dropout: 0.3
+  batchnorm: false
 
 augment: none
 sampling: random
@@ -49,7 +50,7 @@ training:
   early_stopping_patience: 12
   triplet_margin: 0.3
   ntxent_temperature: 0.1
-  use_group_batch_sampler: true
+  use_group_batch_sampler: false
   num_workers: 0
   pin_memory: false
 
