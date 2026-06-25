@@ -65,8 +65,7 @@ def collect_projected_embeddings(
     seg_ids: list[int] = []
 
     for batch in loader:
-        pooled = pooled_features_from_batch(
-            batch, device)
+        pooled = pooled_features_from_batch(batch, device)
         z = head(pooled)
         z_list.append(z.cpu())
         group_ids.extend(int(g) for g in batch["group_id"].tolist())
@@ -142,35 +141,19 @@ def compute_silhouette(z: torch.Tensor, group_ids: list[int]) -> float | None:
 
 
 def compute_dtw_distance(s1: np.ndarray, s2: np.ndarray) -> float:
-    """Compute the Dynamic Time Warping (DTW) distance using Cosine Distance.
-    
-    Args:
-        s1: Normalized sequence array of shape (N, D)
-        s2: Normalized sequence array of shape (M, D)
-        
-    Returns:
-        The DTW distance normalized by path length.
-    """
-    n, d = s1.shape
+    """DTW cosine distance between two normalized segment sequences, normalized by path length."""
+    n, _ = s1.shape
     m, _ = s2.shape
-    
-    # Cosine distance grid (already normalized)
     dist_matrix = 1.0 - np.dot(s1, s2.T)
-    
-    # DP table
     dp = np.zeros((n, m))
     dp[0, 0] = dist_matrix[0, 0]
-    
     for i in range(1, n):
-        dp[i, 0] = dp[i-1, 0] + dist_matrix[i, 0]
-        
+        dp[i, 0] = dp[i - 1, 0] + dist_matrix[i, 0]
     for j in range(1, m):
-        dp[0, j] = dp[0, j-1] + dist_matrix[0, j]
-        
+        dp[0, j] = dp[0, j - 1] + dist_matrix[0, j]
     for i in range(1, n):
         for j in range(1, m):
-            dp[i, j] = dist_matrix[i, j] + min(dp[i-1, j], dp[i, j-1], dp[i-1, j-1])
-            
+            dp[i, j] = dist_matrix[i, j] + min(dp[i - 1, j], dp[i, j - 1], dp[i - 1, j - 1])
     return float(dp[-1, -1] / (n + m))
 
 
@@ -180,11 +163,10 @@ def _rank_and_evaluate(
         gallery_gids: np.ndarray,
         descending: bool = True,
 ) -> dict:
-    """Rank gallery elements for each query and calculate MRR, Top-1, and Top-5 scores."""
+    """Rank gallery by score for each query; return MRR, Top-1, Top-5."""
     reciprocal_ranks = []
     top1_hits = 0
     top5_hits = 0
-    
     for i in range(len(query_gids)):
         order = np.argsort(-scores[i]) if descending else np.argsort(scores[i])
         ranked_gids = gallery_gids[order]
@@ -198,7 +180,6 @@ def _rank_and_evaluate(
             top1_hits += 1
         if rank <= 5:
             top5_hits += 1
-            
     return {
         "mrr": float(np.mean(reciprocal_ranks)),
         "top1": float(top1_hits / len(query_gids)),
@@ -207,57 +188,48 @@ def _rank_and_evaluate(
 
 
 def evaluate_track_level(data: dict) -> tuple[dict, dict, dict]:
-    """Compute track-level evaluation metrics: Pooling (Early Fusion), Sequence DTW, and Weighted Voting.
-    
-    Args:
-        data: A dictionary containing z, group_id, role, track_id, and seg_id.
-            
+    """Compute track-level metrics via mean pooling, DTW, and weighted voting.
+
     Returns:
-        A tuple of dictionaries: (pool_metrics, dtw_metrics, voting_metrics)
+        (pool_metrics, dtw_metrics, voting_metrics) — each a dict with mrr/top1/top5.
     """
     track_sequences, track_info = build_track_sequences(data)
 
     query_tids = [tid for tid, info in track_info.items() if info[1] == "cover"]
     gallery_tids = [tid for tid, info in track_info.items() if info[1] == "original"]
-    
+
     if len(query_tids) == 0 or len(gallery_tids) == 0:
         empty = {"mrr": 0.0, "top1": 0.0, "top5": 0.0}
         return empty, empty, empty
-        
+
     query_gids = np.array([track_info[tid][0] for tid in query_tids])
     gallery_gids = np.array([track_info[tid][0] for tid in gallery_tids])
-    
-    # --- Track Pooling evaluation (Early Fusion) ---
+
+    # Mean-pooled track embeddings (early fusion)
     query_pooled = np.stack([track_sequences[tid].mean(axis=0) for tid in query_tids], axis=0)
     gallery_pooled = np.stack([track_sequences[tid].mean(axis=0) for tid in gallery_tids], axis=0)
-    
     qp_norm = query_pooled / (np.linalg.norm(query_pooled, axis=1, keepdims=True) + 1e-9)
     gp_norm = gallery_pooled / (np.linalg.norm(gallery_pooled, axis=1, keepdims=True) + 1e-9)
-    
     sims = np.dot(qp_norm, gp_norm.T)
     pool_metrics = _rank_and_evaluate(sims, query_gids, gallery_gids, descending=True)
-    
-    # --- Track DTW evaluation (Late Fusion sequence alignment) ---
+
+    # DTW sequence alignment (late fusion)
     dtw_distances = np.zeros((len(query_tids), len(gallery_tids)))
     for i, q_tid in enumerate(query_tids):
-        s_q = track_sequences[q_tid]
         for j, g_tid in enumerate(gallery_tids):
-            s_g = track_sequences[g_tid]
-            dtw_distances[i, j] = compute_dtw_distance(s_q, s_g)
-            
+            dtw_distances[i, j] = compute_dtw_distance(
+                track_sequences[q_tid], track_sequences[g_tid]
+            )
     dtw_metrics = _rank_and_evaluate(dtw_distances, query_gids, gallery_gids, descending=False)
-    
-    # --- Track Weighted Voting (Late Fusion no-alignment matching) ---
+
+    # Weighted voting — max-similarity per query segment (late fusion)
     voting_similarities = np.zeros((len(query_tids), len(gallery_tids)))
     for i, q_tid in enumerate(query_tids):
-        s_q = track_sequences[q_tid]
         for j, g_tid in enumerate(gallery_tids):
-            s_g = track_sequences[g_tid]
-            segment_similarities = np.dot(s_q, s_g.T)
-            voting_similarities[i, j] = float(np.mean(np.max(segment_similarities, axis=1)))
-            
+            seg_sims = np.dot(track_sequences[q_tid], track_sequences[g_tid].T)
+            voting_similarities[i, j] = float(np.mean(np.max(seg_sims, axis=1)))
     voting_metrics = _rank_and_evaluate(voting_similarities, query_gids, gallery_gids, descending=True)
-    
+
     return pool_metrics, dtw_metrics, voting_metrics
 
 
@@ -271,35 +243,28 @@ def evaluate_loader(
         backbone_spec=None,
         epoch: int = 0,
 ) -> dict:
-    data = collect_projected_embeddings(
-        cfg, head, loader, device, epoch,
-    )
-    
-    # Segment-level (baseline) metrics
+    data = collect_projected_embeddings(cfg, head, loader, device, epoch)
+
     mrr, top1, top5 = compute_mrr_top1_top5(data["z"], data["group_id"], data["role"])
     sil = compute_silhouette(data["z"], data["group_id"])
 
-    # Track-level metrics
     pool_metrics, dtw_metrics, voting_metrics = evaluate_track_level(data)
-    
+
     track_pool_mrr = pool_metrics["mrr"]
     track_pool_top1 = pool_metrics["top1"]
     track_pool_top5 = pool_metrics["top5"]
-    
     track_dtw_mrr = dtw_metrics["mrr"]
     track_dtw_top1 = dtw_metrics["top1"]
     track_dtw_top5 = dtw_metrics["top5"]
-
     track_voting_mrr = voting_metrics["mrr"]
     track_voting_top1 = voting_metrics["top1"]
     track_voting_top5 = voting_metrics["top5"]
 
-    # Show formatted comparison table
     seg_sel = " [Selected]" if cfg.eval_level == "segment" else ""
     pool_sel = " [Selected]" if cfg.eval_level == "track_pool" else ""
     dtw_sel = " [Selected]" if cfg.eval_level == "track_dtw" else ""
     voting_sel = " [Selected]" if cfg.eval_level == "track_voting" else ""
-    
+
     LOGGER.info("=" * 75)
     LOGGER.info("EVALUATION LEVEL COMPARISON (mrr / top1 / top5)")
     LOGGER.info("=" * 75)
@@ -418,7 +383,6 @@ def save_metrics(metrics: dict, path: Path) -> None:
 def main() -> None:
     cfg = parse_config_arg("Evaluate a trained projection head on the val split")
     get_logger("evaluate", log_file=log_file_for(cfg))
-    
     set_global_seed(cfg.seed)
     device = pick_device()
 

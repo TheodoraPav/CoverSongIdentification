@@ -158,7 +158,6 @@ def _build_group_tracks(
     return dict(groups)
 
 
-
 def _select_fixed_eval_indices(
     cfg: ExperimentConfig,
     group_ids: list[int],
@@ -321,12 +320,11 @@ def _build_group_pair_index(
         if role in ("original", "cover"):
             groups[gid][role].append(pos)
 
-    complete: dict[int, dict[str, list[int]]] = {}
-    for gid, roles in groups.items():
-        orig = roles.get("original", [])
-        cover = roles.get("cover", [])
-        if orig and cover:
-            complete[gid] = {"original": orig, "cover": cover}
+    complete: dict[int, dict[str, list[int]]] = {
+        gid: {"original": roles.get("original", []), "cover": roles.get("cover", [])}
+        for gid, roles in groups.items()
+        if roles.get("original") and roles.get("cover")
+    }
     return complete
 
 

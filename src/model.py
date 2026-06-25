@@ -352,7 +352,6 @@ class ProjectionHead(nn.Module):
             self.input_dropout = nn.Dropout(self.feature_dropout)
         else:
             self.input_dropout = None
-
         layers: list[nn.Module] = []
         if chroma_dim > 0:
             # Chroma bottleneck: input_dim → chroma_dim → hidden_dim
@@ -374,16 +373,14 @@ class ProjectionHead(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x is (B, D) for single-layer mode, or (B, N_layers, D) for multi-layer
+        # x: (B, D) for single-layer mode, (B, N_layers, D) for multi-layer
         if self.layer_pooler is not None and x.dim() == 3:
             x = self.layer_pooler(x)  # (B, N_layers, D) → (B, D)
-            
         if self.training:
             if self.input_dropout is not None:
                 x = self.input_dropout(x)
             if self.feature_noise > 0.0:
                 x = x + torch.randn_like(x) * self.feature_noise
-                
         z = self.net(x)
         return F.normalize(z, p=2, dim=-1)
 

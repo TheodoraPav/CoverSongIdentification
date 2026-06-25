@@ -6,6 +6,8 @@ Usage:
 
 from __future__ import annotations
 
+import datetime
+import shutil
 import sys
 from pathlib import Path
 
@@ -28,6 +30,7 @@ from src.utils import (  # noqa: E402
     ExperimentConfig,
     checkpoint_path_for,
     curves_plot_file_for,
+    experiment_dir_for,
     get_logger,
     history_file_for,
     log_file_for,
@@ -106,11 +109,6 @@ def train_one_epoch(
 
 
 def run_training(cfg: ExperimentConfig) -> dict:
-    # Archive the existing run directory if it contains a trained checkpoint to prevent overwrites
-    from src.utils import experiment_dir_for
-    import datetime
-    import shutil
-
     exp_dir = experiment_dir_for(cfg)
     if exp_dir.exists() and (exp_dir / "best_head.pt").is_file():
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

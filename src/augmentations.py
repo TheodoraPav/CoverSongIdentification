@@ -74,5 +74,3 @@ def length_fix(samples: np.ndarray, target_length: int) -> np.ndarray:
     pad_width = [(0, 0)] * (samples.ndim - 1) + [(0, target_length - n)]
     return np.pad(samples, pad_width, mode="constant")
 
-
-

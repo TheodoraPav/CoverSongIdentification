@@ -425,7 +425,6 @@ def experiment_id_for(cfg: ExperimentConfig) -> str:
     return cfg.experiment_name
 
 
-
 def experiment_dir_for(cfg: ExperimentConfig) -> Path:
     """`results/{experiment_id}/`."""
     return Path(cfg.paths.results_dir) / experiment_id_for(cfg)
@@ -564,17 +563,19 @@ def save_curves_plot(history: list[dict], path: Path, best_epoch: int | None = N
     ax2.set_ylim(0.0, 1.05)
 
     lines = line1 + line2 + line_top1 + line3
-    
+
     if best_epoch is not None:
-        best_line = ax1.axvline(x=best_epoch, color="tab:purple", linestyle="--", linewidth=1.5, alpha=0.85, label=f"Best Epoch ({best_epoch})")
+        best_line = ax1.axvline(
+            x=best_epoch, color="tab:purple", linestyle="--",
+            linewidth=1.5, alpha=0.85, label=f"Best Epoch ({best_epoch})",
+        )
         lines.append(best_line)
 
-    labels = [l.get_label() for l in lines]
+    labels = [ln.get_label() for ln in lines]
     ax1.legend(lines, labels, loc="upper right", frameon=True, shadow=False, facecolor="white", edgecolor="lightgray")
 
     plt.title("Training Loss and Validation Retrieval Performance", fontsize=13, fontweight="bold", pad=15)
     fig.tight_layout()
-    
     path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(path, dpi=150)
     plt.close(fig)
